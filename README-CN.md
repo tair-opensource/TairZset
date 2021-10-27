@@ -4,10 +4,13 @@
 
 ### 主要的特性如下：
 
-- 支持（任意）多维score排序，且任意维度精度不丢失
+- 支持多维(最大255)score排序，且任意维度精度不丢失
 - 在多维score下仍然支持incrby语义
 - 语法和原生zset类似
 
+### 排序规则：      
+对于多维score而言，左边的score优先级大于右边的score，以一个三维score为例：score1#score2#score3，tairzset在比较时，会先比较score1，只有score1相等时才会比较score2，否则就以score1的比较结果作为整个score的比较结果。同理，只有当score2相等时才会比较score3。   
+   
 ### 应用场景：
 - 游戏玩家之间排序
 - 直播间主播热度排序

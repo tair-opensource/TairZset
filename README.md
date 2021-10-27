@@ -4,10 +4,12 @@
 
 ### Features：
 
-- Support (arbitrary) multi-score sorting, and the accuracy of any dimension is not lost
+- Support multi-score（Limited to 255）sorting, and the accuracy of any dimension is not lost
 - Incrby semantics is still supported under multi-score sorting
-- The syntax is similar to redis zset
+- The syntax is similar to redis zset  
 
+### Sorting rules：     
+For multi-dimensional scores, the priority of the score on the left is greater than the score on the right. Take a three-dimensional score as an example: score1#score2#score3. When comparing, tairzset will compare score1 first, and only compare score2 when score1 is equal, otherwise it will Take the comparison result of score1 as the comparison result of the entire score. In the same way, score3 will be compared only when score2 is equal.  
 ### Application scenario：
 - Sorting among gamers
 - Anchor popularity ranking in live room
