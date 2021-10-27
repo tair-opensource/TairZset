@@ -1,0 +1,9 @@
+BasedOnStyle: Google
+Language: Cpp
+IndentWidth: 4
+# Force pointers to the type for C++.
+DerivePointerAlignment: false
+PointerAlignment: Right
+AccessModifierOffset: -4
+BreakBeforeBinaryOperators: All
+ColumnLimit: 0
