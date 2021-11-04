@@ -64,6 +64,9 @@ cmake ../ && make -j
 ```
 then the tairzset_module.so library file will be generated in the lib directory
 
+```
+./redis-server --loadmodule /path/to/tairzset_module.so
+```
 ## Test
 1. Modify the path in the tairzset.tcl file in the `tests` directory to `set testmodule [file your_path/tairzset_module.so]`
 2. Add the path of the tairzset.tcl file in the `tests` directory to the all_tests of redis test_helper.tcl
