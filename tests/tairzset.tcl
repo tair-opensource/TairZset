@@ -8,9 +8,9 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         }
     }
 
-    proc create_big_tairzset {key iterm} {
+    proc create_big_tairzset {key item} {
         r del $key
-        for {set j 0} {$j < $iterm} {incr j} {
+        for {set j 0} {$j < $item} {incr j} {
             r exzadd $key $j $j
         }
     }
