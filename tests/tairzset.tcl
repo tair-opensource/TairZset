@@ -1,4 +1,5 @@
-set testmodule [file normalize ../lib/tairzset_module.so]
+set testmodule [file normalize your_path/tairzset_module.so]
+
 start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
     proc create_tairzset {key items} {
         r del $key
