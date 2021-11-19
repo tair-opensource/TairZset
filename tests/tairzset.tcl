@@ -1,6 +1,8 @@
 set testmodule [file normalize your_path/tairzset_module.so]
 
 start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
+    r module load $testmodule
+
     proc create_tairzset {key items} {
         r del $key
         foreach {score entry} $items {
@@ -815,11 +817,13 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
 }
 
 start_server {tags {"repl test"} overrides {bind 0.0.0.0}} {
+    r module load $testmodule
     set slave [srv 0 client]
     set slave_host [srv 0 host]
     set slave_port [srv 0 port]
 
     start_server {overrides {bind 0.0.0.0}} {
+        r module load $testmodule
         set master [srv 0 client]
         set master_host [srv 0 host]
         set master_port [srv 0 port]
