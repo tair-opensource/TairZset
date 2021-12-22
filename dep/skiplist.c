@@ -18,6 +18,9 @@ static inline void rm_free(void *p) {
     RedisModule_Free(p);
 }
 
+RedisModuleString *shared_minstring = NULL;
+RedisModuleString *shared_maxstring = NULL;
+
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
 m_zskiplistNode *m_zslCreateNode(int level, scoretype *score, RedisModuleString *ele) {
@@ -735,7 +738,7 @@ fail:
 inline int mscoreCmp(scoretype *s1, scoretype *s2) {
     assert(s1 != NULL);
     assert(s2 != NULL);
-    assert(s1->score_num == s1->score_num);
+    assert(s1->score_num == s2->score_num);
 
     int num = s1->score_num, i;
 
