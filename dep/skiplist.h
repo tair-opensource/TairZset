@@ -55,8 +55,8 @@ typedef struct {
     int minex, maxex;             /* are min or max exclusive? */
 } m_zlexrangespec;
 
-RedisModuleString *shared_minstring;
-RedisModuleString *shared_maxstring;
+extern RedisModuleString *shared_minstring;
+extern RedisModuleString *shared_maxstring;
 
 m_zskiplist *m_zslCreate(unsigned char score_num);
 void m_zslFree(m_zskiplist *zsl);
