@@ -1,4 +1,14 @@
-# TairZset: 支持多维排序的zset
+
+![](https://img.shields.io/badge/license-Apache--2.0-green)
+![](https://img.shields.io/badge/build-pass-green)
+![](https://img.shields.io/badge/PRs-welcome-green)
+   
+
+<div align=center>
+<img src="imgs/tairzset_logo.jpg" width="500"/>
+</div>
+   
+
 ## 简介  [英文说明](README.md)
      TairZset是基于redis module开发的一种数据结构，和redis原生的zset数据结构相比，TairZset不但和原生zset一样具有丰富的数据接口和高性能，还提供了（任意）多维排序的能力。
 

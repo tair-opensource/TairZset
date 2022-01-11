@@ -1,4 +1,14 @@
-# TairZset: Support multi-score sorting zset
+
+![](https://img.shields.io/badge/license-Apache--2.0-green)
+![](https://img.shields.io/badge/build-pass-green)
+![](https://img.shields.io/badge/PRs-welcome-green)
+   
+
+<div align=center>
+<img src="imgs/tairzset_logo.jpg" width="500"/>
+</div>
+   
+
 ## Introduction  [Chinese](README-CN.md)
      TairZset is a data structure developed based on the redis module. Compared with the native zset data structure of redis, TairZset not only has the same rich data interface and high performance as the native zset, but also provides (arbitrary) multi-score sorting capabilities.
 
