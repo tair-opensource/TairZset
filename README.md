@@ -1,8 +1,9 @@
 
 ![](https://img.shields.io/badge/license-Apache--2.0-green)
+![](https://img.shields.io/badge/PRs-welcome-green)
 [![CMake](https://github.com/alibaba/TairZset/actions/workflows/cmake.yml/badge.svg)](https://github.com/alibaba/TairZset/actions/workflows/cmake.yml)
 [![CI](https://github.com/alibaba/TairZset/actions/workflows/ci.yml/badge.svg)](https://github.com/alibaba/TairZset/actions/workflows/ci.yml)
-![](https://img.shields.io/badge/PRs-welcome-green)
+
    
 
 <div align=center>
@@ -65,6 +66,11 @@ For multi-dimensional scores, the priority of the score on the left is greater t
 4) "3.2999999999999998#1.1000000000000001"
 5) "y"
 6) "4.2000000000000002#2.2000000000000002"
+```
+
+## Docker
+```
+docker run -p 6379:6379 tairmodule/tairzset:latest
 ```
 ## Build
 
