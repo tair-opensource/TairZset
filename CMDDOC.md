@@ -230,6 +230,18 @@ If member does not exist in the tairzset or key does not exist, Bulk string repl
 > EXZCOUNT key min max   
 > time complexity：O(log(N)) with N being the number of elements in the tairzset.
 
+### EXZMSCORE
+> EXZMSCORE key member [member ...]
+> time complexity：O(N) where N is the number of members being requested.
+
+#### Command Description:
+
+Returns the scores associated with the specified members in the sorted set stored at key. For every member that does not exist in the sorted set, a nil value is returned.
+
+#### Return value
+
+Array reply: list of scores or nil associated with the specified member values (multiple double-precision floating-point numbers separated by #), represented as strings.
+
 #### Command Description:
 Returns the number of elements in the tairzset at key with a score between min and max.
 

@@ -1167,6 +1167,40 @@ int TairZsetTypeZlexcount_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **
     return REDISMODULE_OK;
 }
 
+/* EXZMSCORE key member [member ...] */
+int TairZsetTypeZmscore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ);
+    int type = RedisModule_KeyType(key);
+    if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+        RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+        return REDISMODULE_ERR;
+    }
+
+    TairZsetObj *tair_zset_obj = NULL;
+    if (type != REDISMODULE_KEYTYPE_EMPTY) {
+        tair_zset_obj = RedisModule_ModuleTypeGetValue(key);
+    }
+
+    RedisModule_ReplyWithArray(ctx, argc - 2);
+
+    scoretype *score;
+    for (int j = 2; j < argc; j++) {
+        if (tair_zset_obj == NULL || exZsetScore(tair_zset_obj, argv[j], &score) == C_ERR) {
+            RedisModule_ReplyWithNull(ctx);
+        } else {
+            sds score_str = mscore2String(score);
+            RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+            m_sdsfree(score_str);
+        }
+    }
+    return REDISMODULE_OK;
+}
+
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
     REDISMODULE_NOT_USED(encver);
@@ -1346,6 +1380,7 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzrevrankbyscore", TairZsetTypeZrevrankByScore_RedisCommand)
     CREATE_ROCMD("exzcount", TairZsetTypeZcount_RedisCommand)
     CREATE_ROCMD("exzlexcount", TairZsetTypeZlexcount_RedisCommand)
+    CREATE_ROCMD("exzmscore", TairZsetTypeZmscore_RedisCommand)
 
     return REDISMODULE_OK;
 }

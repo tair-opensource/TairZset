@@ -814,6 +814,63 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_error "*not*string*" {r exzrangebylex fooz +x \[bar}
         assert_error "*not*string*" {r exzrangebylex fooz -x \[bar}
     }
+
+    test "EXZMSCORE basic" {   
+        r del exzmscoretest
+        r exzadd exzmscoretest 10 x
+        r exzadd exzmscoretest 20 y
+
+        assert_equal {10 20} [r exzmscore exzmscoretest x y]
+
+        r del exzmscoretest
+        r exzadd exzmscoretest 10#20 x
+        r exzadd exzmscoretest 20#30 y
+
+        assert_equal {10#20 20#30} [r exzmscore exzmscoretest x y]
+    } 
+
+    test "EXZMSCORE retrieve from empty set" {
+        r del exzmscoretest
+
+        assert_equal {{} {}} [r exzmscore exzmscoretest x y]
+    } 
+
+    test "EXZMSCORE retrieve with missing member" {
+        r del exzmscoretest
+        r exzadd exzmscoretest 10 x
+
+        assert_equal {10 {}} [r exzmscore exzmscoretest x y]
+
+        r del exzmscoretest
+        r exzadd exzmscoretest 10#1.1 x
+
+        assert_equal {10#1.1000000000000001 {}} [r exzmscore exzmscoretest x y]
+    } 
+
+    test "EXZMSCORE retrieve single member" {
+        r del exzmscoretest
+        r exzadd exzmscoretest 10 x
+        r exzadd exzmscoretest 20 y
+
+        assert_equal {10} [r exzmscore exzmscoretest x]
+        assert_equal {20} [r exzmscore exzmscoretest y]
+
+        r del exzmscoretest
+        r exzadd exzmscoretest 10#20#30#40 x
+        r exzadd exzmscoretest 20#10#50#60 y
+
+        assert_equal {10#20#30#40} [r exzmscore exzmscoretest x]
+        assert_equal {20#10#50#60} [r exzmscore exzmscoretest y]
+    } 
+
+    test "EXZMSCORE retrieve requires one or more members" {
+        r del exzmscoretest
+        r zadd exzmscoretest 10 x
+        r zadd exzmscoretest 20 y
+
+        catch {r exzmscore exzmscoretest} e
+        assert_match {*ERR*wrong*number*arg*} $e
+    }
 }
 
 start_server {tags {"repl test"} overrides {bind 0.0.0.0}} {
