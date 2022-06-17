@@ -821,6 +821,12 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzadd exzmscoretest 20 y
 
         assert_equal {10 20} [r exzmscore exzmscoretest x y]
+
+        r del exzmscoretest
+        r exzadd exzmscoretest 10#20 x
+        r exzadd exzmscoretest 20#30 y
+
+        assert_equal {10#20 20#30} [r exzmscore exzmscoretest x y]
     } 
 
     test "EXZMSCORE retrieve from empty set" {
@@ -834,6 +840,11 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzadd exzmscoretest 10 x
 
         assert_equal {10 {}} [r exzmscore exzmscoretest x y]
+
+        r del exzmscoretest
+        r exzadd exzmscoretest 10#1.1 x
+
+        assert_equal {10#1.1000000000000001 {}} [r exzmscore exzmscoretest x y]
     } 
 
     test "EXZMSCORE retrieve single member" {
@@ -842,6 +853,14 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzadd exzmscoretest 20 y
 
         assert_equal {10} [r exzmscore exzmscoretest x]
+        assert_equal {20} [r exzmscore exzmscoretest y]
+
+        r del exzmscoretest
+        r exzadd exzmscoretest 10#20#30#40 x
+        r exzadd exzmscoretest 20#10#50#60 y
+
+        assert_equal {10#20#30#40} [r exzmscore exzmscoretest x]
+        assert_equal {20#10#50#60} [r exzmscore exzmscoretest y]
     } 
 
     test "EXZMSCORE retrieve requires one or more members" {
