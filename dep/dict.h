@@ -174,6 +174,7 @@ m_dictIterator *m_dictGetSafeIterator(dict *d);
 m_dictEntry *m_dictNext(m_dictIterator *iter);
 void m_dictReleaseIterator(m_dictIterator *iter);
 m_dictEntry *m_dictGetRandomKey(dict *d);
+m_dictEntry *m_dictGetFairRandomKey(dict *d);
 unsigned int m_dictGetSomeKeys(dict *d, m_dictEntry **des, unsigned int count);
 void m_dictGetStats(char *buf, size_t bufsize, dict *d);
 uint64_t m_dictGenHashFunction(const void *key, int len);

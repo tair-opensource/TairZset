@@ -263,3 +263,23 @@ The min and max arguments have the same meaning as described for EXZRANGEBYLEX.
 Note: the command has a complexity of just O(log(N)) because it uses elements ranks (see ZRANK) to get an idea of the range. Because of this there is no need to do a work proportional to the size of the range.
 #### Return value
 Integer reply: the number of elements in the specified score range.
+
+### EXZRANDMEMBER
+> EXZRANDMEMBER key [ count [WITHSCORES]]
+> time complexity：O(N) where N is the number of elements returned.
+
+#### Command Description:
+
+When called with just the key argument, return a random element from the sorted set value stored at key.
+
+If the provided count argument is positive, return an array of distinct elements. The array's length is either count or the sorted set's cardinality (EXZCARD), whichever is lower.
+
+If called with a negative count, the behavior changes and the command is allowed to return the same element multiple times. In this case, the number of returned elements is the absolute value of the specified count.
+
+The optional WITHSCORES modifier changes the reply so it includes the respective scores of the randomly selected elements from the sorted set.
+
+#### Return value
+
+Bulk string reply: without the additional count argument, the command returns a Bulk Reply with the randomly selected element, or nil when key does not exist.
+
+Array reply: when the additional count argument is passed, the command returns an array of elements, or an empty array when key does not exist. If the WITHSCORES modifier is used, the reply is a list elements and their scores from the sorted set.

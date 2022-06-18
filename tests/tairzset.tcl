@@ -871,6 +871,209 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         catch {r exzmscore exzmscoretest} e
         assert_match {*ERR*wrong*number*arg*} $e
     }
+
+    test "EXZRANDMEMBER errors" {
+        catch {r exzrandmember myzset 1 other args} e
+        assert_match {*ERR*syntax*} $e
+
+        catch {r exzrandmember myzset 1 withscores other} e
+        assert_match {*ERR*syntax*} $e
+
+        catch {r exzrandmember myzset 1 other}
+        assert_match {*ERR*syntax*} $e
+
+        catch {r exzrandmember myzset 1.1} e
+        assert_match {*ERR*not*integer*} $e
+
+        catch {r exzrandmember myzset not-int} e
+        assert_match {*ERR*not*integer*} $e
+    }
+
+    test "EXZRANDMEMBER count of 0 is handled correctly" {
+        assert_equal {} [r exzrandmember myzset 0]
+    }
+
+    test "EXZRANDMEMBER with <count> against non existing key" {
+        assert_equal {} [r exzrandmember nonexisting_key 100]
+    }
+
+    # Make sure we can distinguish between an empty array and a null response
+    r readraw 1
+
+    test "EXZRANDMEMBER count of 0 is handled correctly - emptyarray" {
+        r del myzset
+        r exzadd myzset 1#2 member
+        assert_equal {*0} [r exzrandmember myzset 0]
+    }
+
+    test "ZRANDMEMBER with <count> against non existing key - emptyarray" {
+        assert_equal {*0} [r exzrandmember nonexisting_key 100]
+    } 
+
+    r readraw 0
+
+    proc get_keys {l} {
+        set res {}
+        foreach {score key} $l {
+            lappend res $key
+        }
+        return $res
+    }
+
+    test "EXZRANDMEMBER without <count>" {
+        set contents {1#2#3 a 2#3#4 b 3#4#5 c}
+        create_tairzset myzset $contents
+        array set arr {}
+        for {set i 0} {$i < 100} {incr i} {
+            set key [r exzrandmember myzset]
+            set arr($key) 1
+        }
+        assert_equal [lsort [get_keys $contents]] [lsort [array names arr]]
+    }
+
+    # Check whether the zset members belong to the zset
+    proc check_member {mydict res} {
+        foreach ele $res {
+            assert {[dict exists $mydict $ele]}
+        }
+    }
+
+    # Check whether the zset members and score belong to the zset
+    proc check_member_and_score {mydict res} {
+       foreach {key val} $res {
+            assert_equal $val [dict get $mydict $key]
+        }
+    }
+
+    test "ZRANDMEMBER with <count>" {
+        set contents {1#1.1 a 2#2.2 b 3#3.3 c 4#4.4 d 5#5.5 e 6#6.6 f 7#7.7 g 7#7.8 h 9#9.9 i 10#10.1 j}
+        create_tairzset myzset $contents
+
+        # create a dict for easy lookup
+        set mydict [dict create {*}[r exzrange myzset 0 -1 withscores]]
+
+        # We'll stress different parts of the code, see the implementation
+        # of ZRANDMEMBER for more information, but basically there are
+        # four different code paths.
+
+        # PATH 1: Use negative count.
+
+        # 1) Check that it returns repeated elements with and without values.
+        # 2) Check that all the elements actually belong to the original zset.
+        set res [r exzrandmember myzset -20]
+        assert_equal [llength $res] 20
+        check_member $mydict $res
+
+        set res [r exzrandmember myzset -1001]
+        assert_equal [llength $res] 1001
+        check_member $mydict $res
+
+        # again with WITHSCORES
+        set res [r exzrandmember myzset -20 withscores]
+        assert_equal [llength $res] 40
+        check_member_and_score $mydict $res
+
+        set res [r exzrandmember myzset -1001 withscores]
+        assert_equal [llength $res] 2002
+        check_member_and_score $mydict $res
+
+        # Test random uniform distribution
+        # df = 9, 40 means 0.00001 probability
+        set res [r exzrandmember myzset -1000]
+        assert_lessthan [chi_square_value $res] 40
+        check_member $mydict $res
+
+        # 3) Check that eventually all the elements are returned.
+        #    Use both WITHSCORES and without
+        unset -nocomplain auxset
+        set iterations 1000
+        while {$iterations != 0} {
+            incr iterations -1
+            if {[expr {$iterations % 2}] == 0} {
+                set res [r exzrandmember myzset -3 withscores]
+                foreach {key val} $res {
+                    dict append auxset $key $val
+                }
+            } else {
+                set res [r exzrandmember myzset -3]
+                foreach key $res {
+                    dict append auxset $key
+                }
+            }
+            if {[lsort [dict keys $mydict]] eq
+                [lsort [dict keys $auxset]]} {
+                break;
+            }
+        }
+        assert {$iterations != 0}
+
+        # PATH 2: positive count (unique behavior) with requested size
+        # equal or greater than set size.
+        foreach size {10 20} {
+            set res [r exzrandmember myzset $size]
+            assert_equal [llength $res] 10
+            assert_equal [lsort $res] [lsort [dict keys $mydict]]
+            check_member $mydict $res
+
+            # again with WITHSCORES
+            set res [r exzrandmember myzset $size withscores]
+            assert_equal [llength $res] 20
+            assert_equal [lsort $res] [lsort $mydict]
+            check_member_and_score $mydict $res
+        }
+
+        # PATH 3: Ask almost as elements as there are in the set.
+        # In this case the implementation will duplicate the original
+        # set and will remove random elements up to the requested size.
+        #
+        # PATH 4: Ask a number of elements definitely smaller than
+        # the set size.
+        #
+        # We can test both the code paths just changing the size but
+        # using the same code.
+        foreach size {1 2 8} {
+            # 1) Check that all the elements actually belong to the
+            # original set.
+            set res [r exzrandmember myzset $size]
+            assert_equal [llength $res] $size
+            check_member $mydict $res
+
+            # again with WITHSCORES
+            set res [r exzrandmember myzset $size withscores]
+            assert_equal [llength $res] [expr {$size * 2}]
+            check_member_and_score $mydict $res
+
+            # 2) Check that eventually all the elements are returned.
+            #    Use both WITHSCORES and without
+            unset -nocomplain auxset
+            unset -nocomplain allkey
+            set iterations [expr {1000 / $size}]
+            set all_ele_return false
+            while {$iterations != 0} {
+                incr iterations -1
+                if {[expr {$iterations % 2}] == 0} {
+                    set res [r exzrandmember myzset $size withscores]
+                    foreach {key value} $res {
+                        dict append auxset $key $value
+                        lappend allkey $key
+                    }
+                } else {
+                    set res [r exzrandmember myzset $size]
+                    foreach key $res {
+                        dict append auxset $key
+                        lappend allkey $key
+                    }
+                }
+                if {[lsort [dict keys $mydict]] eq
+                    [lsort [dict keys $auxset]]} {
+                    set all_ele_return true
+                }
+            }
+            assert_equal $all_ele_return true
+            # df = 9, 40 means 0.00001 probability
+            assert_lessthan [chi_square_value $allkey] 40
+        }
+    }
 }
 
 start_server {tags {"repl test"} overrides {bind 0.0.0.0}} {
