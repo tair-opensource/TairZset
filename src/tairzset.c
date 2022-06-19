@@ -819,7 +819,8 @@ void exZrandMemberWithCountCommand(RedisModuleCtx *ctx, TairZsetObj *zobj, long 
 
     /* If count is zero, serve it ASAP to avoid special cases later. */
     if (count == 0) {
-        RedisModule_ReplyWithEmptyArray(ctx);
+        /* RedisModule_ReplyWithEmptyArray is not supported in Redis 5.0 */
+        RedisModule_ReplyWithArray(ctx, 0);
         return;
     }
 
@@ -1413,7 +1414,8 @@ int TairZsetTypeZrandmember_RedisCommand(RedisModuleCtx *ctx, RedisModuleString 
             withscores = 1;
         }
         if (tair_zset_obj == NULL) {
-            RedisModule_ReplyWithEmptyArray(ctx);
+            /* RedisModule_ReplyWithEmptyArray is not supported in Redis 5.0 */
+            RedisModule_ReplyWithArray(ctx, 0);
             return REDISMODULE_OK;
         }
         exZrandMemberWithCountCommand(ctx, tair_zset_obj, l, withscores);

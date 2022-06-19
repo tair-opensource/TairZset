@@ -898,19 +898,26 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
     }
 
     # Make sure we can distinguish between an empty array and a null response
-    r readraw 1
-
-    test "EXZRANDMEMBER count of 0 is handled correctly - emptyarray" {
-        r del myzset
-        r exzadd myzset 1#2 member
-        assert_equal {*0} [r exzrandmember myzset 0]
+    # readraw is not supported in Redis 5.0
+    set support_readraw true
+    if {[catch {r readraw 1}]} {
+        set support_readraw false
     }
 
-    test "ZRANDMEMBER with <count> against non existing key - emptyarray" {
-        assert_equal {*0} [r exzrandmember nonexisting_key 100]
-    } 
+    if {$support_readraw == true} {
+        test "EXZRANDMEMBER count of 0 is handled correctly - emptyarray" {
+            r del myzset
+            r exzadd myzset 1#2 member
+            assert_equal {*0} [r exzrandmember myzset 0]
+        }
 
-    r readraw 0
+        test "EXZRANDMEMBER with <count> against non existing key - emptyarray" {
+            assert_equal {*0} [r exzrandmember nonexisting_key 100]
+        } 
+
+        r readraw 0
+    }
+
 
     proc get_keys {l} {
         set res {}
@@ -945,7 +952,41 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         }
     }
 
-    test "ZRANDMEMBER with <count>" {
+    # Calculation value of Chi-Square Distribution. By this value
+    # we can verify the random distribution sample confidence.
+    # Based on the following wiki:
+    # https://en.wikipedia.org/wiki/Chi-square_distribution
+    #
+    # param res    Random sample list
+    # return       Value of Chi-Square Distribution
+    #
+    # x2_value: return of chi_square_value function
+    # df: Degrees of freedom, Number of independent values minus 1
+    #
+    # By using x2_value and df to back check the cardinality table,
+    # we can know the confidence of the random sample.
+    #
+    # This proc is added in Redis 6.2
+    proc chi_square_value {res} {
+        unset -nocomplain mydict
+        foreach key $res {
+            dict incr mydict $key 1
+        }
+
+        set x2_value 0
+        set p [expr [llength $res] / [dict size $mydict]]
+        foreach key [dict keys $mydict] {
+            set value [dict get $mydict $key]
+
+            # Aggregate the chi-square value of each element
+            set v [expr {pow($value - $p, 2) / $p}]
+            set x2_value [expr {$x2_value + $v}]
+        }
+
+        return $x2_value
+    }
+
+    test "EXZRANDMEMBER with <count>" {
         set contents {1#1.1 a 2#2.2 b 3#3.3 c 4#4.4 d 5#5.5 e 6#6.6 f 7#7.7 g 7#7.8 h 9#9.9 i 10#10.1 j}
         create_tairzset myzset $contents
 
@@ -953,7 +994,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         set mydict [dict create {*}[r exzrange myzset 0 -1 withscores]]
 
         # We'll stress different parts of the code, see the implementation
-        # of ZRANDMEMBER for more information, but basically there are
+        # of EXZRANDMEMBER for more information, but basically there are
         # four different code paths.
 
         # PATH 1: Use negative count.
@@ -980,7 +1021,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         # Test random uniform distribution
         # df = 9, 40 means 0.00001 probability
         set res [r exzrandmember myzset -1000]
-        assert_lessthan [chi_square_value $res] 40
+        assert { [chi_square_value $res] < 40 }
         check_member $mydict $res
 
         # 3) Check that eventually all the elements are returned.
@@ -1071,7 +1112,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
             }
             assert_equal $all_ele_return true
             # df = 9, 40 means 0.00001 probability
-            assert_lessthan [chi_square_value $allkey] 40
+            assert { [chi_square_value $allkey] < 40 }
         }
     }
 }
