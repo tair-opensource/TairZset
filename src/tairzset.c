@@ -782,6 +782,186 @@ cleanup:
     }
 }
 
+/* Return random element from a non empty exzset.
+ * 'ele' will be set to hold the element.
+ * The memory in `ele` is not to be freed or modified by the caller.
+ * 'score' can be NULL in which case it's not extracted. */
+void exZsetRandomElement(TairZsetObj *zobj, RedisModuleString **ele, scoretype **score) {
+    m_dictEntry *de =  m_dictGetFairRandomKey(zobj->dict);
+    *ele = (RedisModuleString*)dictGetKey(de);
+    if (score) {
+        *score = (scoretype*)dictGetVal(de);
+    }
+}
+
+/* How many times bigger should be the zset compared to the requested size
+ * for us to not use the "remove elements" strategy? Read later in the
+ * implementation for more info. */
+#define ZRANDMEMBER_SUB_STRATEGY_MUL 3
+
+/* If client is trying to ask for a very large number of random elements,
+ * queuing may consume an unlimited amount of memory, so we want to limit
+ * the number of randoms per time. */
+#define ZRANDMEMBER_RANDOM_SAMPLE_LIMIT 1000
+
+void exZrandMemberWithCountCommand(RedisModuleCtx *ctx, TairZsetObj *zobj, long l, int withscores) {
+    unsigned long count, size;
+    int uniq = 1;
+
+    size =exZsetLength(zobj);
+
+    if (l >= 0) {
+        count = (unsigned long) l;
+    } else {
+        count = -l;
+        uniq = 0;
+    }
+
+    /* If count is zero, serve it ASAP to avoid special cases later. */
+    if (count == 0) {
+        /* RedisModule_ReplyWithEmptyArray is not supported in Redis 5.0 */
+        RedisModule_ReplyWithArray(ctx, 0);
+        return;
+    }
+
+    /* CASE 1: The count was negative, so the extraction method is just:
+     * "return N random elements" sampling the whole set every time.
+     * This case is trivial and can be served without auxiliary data
+     * structures. This case is the only one that also needs to return the
+     * elements in random order. */
+    if (!uniq || count == 1) {
+        if (withscores)
+            RedisModule_ReplyWithArray(ctx, count*2);
+        else
+            RedisModule_ReplyWithArray(ctx, count);
+
+        while (count--) {
+            m_dictEntry *de = m_dictGetFairRandomKey(zobj->dict);
+            RedisModuleString *key = dictGetKey(de);
+            RedisModule_ReplyWithString(ctx, key);
+            if (withscores) {
+                sds score_str = mscore2String(dictGetVal(de));
+                RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+                m_sdsfree(score_str);
+            }
+        }
+        return;
+    }
+
+    m_zskiplist *zsl = zobj->zsl;
+    m_zskiplistNode *ln;
+    RedisModuleString *ele;
+
+    /* Initiate reply count. */
+    long reply_size = count < size ? count : size;
+    if (withscores)
+        RedisModule_ReplyWithArray(ctx, reply_size*2);
+    else 
+        RedisModule_ReplyWithArray(ctx, reply_size);
+
+    /* CASE 2:
+    * The number of requested elements is greater than the number of
+    * elements inside the zset: simply return the whole zset. */
+    if (count >= size) {
+        ln = zsl->header->level[0].forward;
+        while (reply_size--) {
+            ele = ln->ele;
+            RedisModule_ReplyWithString(ctx, ele);
+            if (withscores) {
+                sds score_str = mscore2String(ln->score);
+                RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+                m_sdsfree(score_str);
+            }
+            ln = ln->level[0].forward;
+        }
+        return;
+    }
+
+    /* CASE 3:
+     * The number of elements inside the zset is not greater than
+     * ZRANDMEMBER_SUB_STRATEGY_MUL times the number of requested elements.
+     * In this case we create a dict from scratch with all the elements, and
+     * subtract random elements to reach the requested number of elements.
+     *
+     * This is done because if the number of requested elements is just
+     * a bit less than the number of elements in the set, the natural approach
+     * used into CASE 4 is highly inefficient. */
+    if (count*ZRANDMEMBER_SUB_STRATEGY_MUL > size) {
+        dict *d = m_dictCreate(&tairZsetDictType, NULL);
+        m_dictExpand(d, size);
+        /* Add all the elements into the temporary dictionary. */
+        ln = zsl->header->level[0].forward;
+        while (ln != NULL) {
+            ele = ln->ele;
+            m_dictEntry *de = m_dictAddRaw(d, ele, NULL);
+            assert(de);
+            if (withscores) 
+                dictSetVal(d, de, ln->score);
+            ln = ln->level[0].forward;
+        }
+        assert(dictSize(d) == size);
+
+        /* Remove random elements to reach the right count. */
+        while (size > count) {
+            m_dictEntry *de;
+            de = m_dictGetRandomKey(d);
+            m_dictUnlink(d,dictGetKey(de));
+            m_dictFreeUnlinkedEntry(d,de);
+            size--;
+        }
+
+        /* Reply with what's in the dict and release memory */
+        m_dictIterator *di;
+        m_dictEntry *de;
+        di = m_dictGetIterator(d);
+        while ((de = m_dictNext(di)) != NULL) {
+            RedisModule_ReplyWithString(ctx, dictGetKey(de));
+            if (withscores) {
+                sds score_str = mscore2String(dictGetVal(de));
+                RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+                m_sdsfree(score_str);
+            }
+        }
+
+        m_dictReleaseIterator(di);
+        m_dictRelease(d);
+    }
+
+    /* CASE 4: We have a big zset compared to the requested number of elements.
+     * In this case we can simply get random elements from the zset and add
+     * to the temporary set, trying to eventually get enough unique elements
+     * to reach the specified count. */
+    else {
+        /* Hashtable encoding (tair zset implementation) */
+        unsigned long added = 0;
+        dict *d = m_dictCreate(&tairZsetDictType, NULL);
+        m_dictExpand(d, count);
+
+        while (added < count) {
+            RedisModuleString *key;
+            scoretype *score;
+            exZsetRandomElement(zobj, &key, &score);
+
+            /* Try to add the object to the dictionary. If it already exists
+            * free it, otherwise increment the number of objects we have
+            * in the result dictionary. */
+            if (m_dictAdd(d,key,NULL) != DICT_OK) {
+                continue;
+            }
+            added++;
+
+            RedisModule_ReplyWithString(ctx, key);
+            if (withscores) { 
+                sds score_str = mscore2String(score);
+                RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+                m_sdsfree(score_str);
+            }
+        }
+        /* Release memory */
+        m_dictRelease(d);
+    }
+}
+
 /* ========================= "tairzset" type commands =======================*/
 
 /* EXZADD key [NX|XX] [CH] [INCR] score member [score member ...] */
@@ -1201,6 +1381,58 @@ int TairZsetTypeZmscore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     return REDISMODULE_OK;
 }
 
+/* EXZRANDMEMBER key [ count [WITHSCORES]] */
+int TairZsetTypeZrandmember_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 2) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ);
+    int type = RedisModule_KeyType(key);
+    if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+        RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+        return REDISMODULE_OK;
+    }
+
+    TairZsetObj *tair_zset_obj = NULL;
+    if (type != REDISMODULE_KEYTYPE_EMPTY) {
+        tair_zset_obj = RedisModule_ModuleTypeGetValue(key);
+    }
+
+    long l;
+    int withscores = 0;
+    if (argc >= 3) {
+        if ((RedisModule_StringToLongLong(argv[2], (long long *)&l) != REDISMODULE_OK)) {
+            RedisModule_ReplyWithError(ctx, "ERR value is not an integer or out of range");
+            return REDISMODULE_OK;
+        }
+        if (argc > 4 || (argc == 4 && mstringcasecmp(argv[3], "withscores"))) {
+            RedisModule_ReplyWithError(ctx, "ERR syntax error");
+            return REDISMODULE_OK;
+        } else if (argc == 4) {
+            withscores = 1;
+        }
+        if (tair_zset_obj == NULL) {
+            /* RedisModule_ReplyWithEmptyArray is not supported in Redis 5.0 */
+            RedisModule_ReplyWithArray(ctx, 0);
+            return REDISMODULE_OK;
+        }
+        exZrandMemberWithCountCommand(ctx, tair_zset_obj, l, withscores);
+        return REDISMODULE_OK;
+    }
+
+    /* Handle variant without <count> argument (Only <key> argument). Reply with simple bulk string */
+    if (tair_zset_obj == NULL) {
+        RedisModule_ReplyWithNull(ctx);
+        return REDISMODULE_OK;
+    }
+    RedisModuleString *ele;
+    exZsetRandomElement(tair_zset_obj, &ele, NULL);
+    RedisModule_ReplyWithString(ctx, ele);
+    return REDISMODULE_OK;
+}
+
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
     REDISMODULE_NOT_USED(encver);
@@ -1381,6 +1613,7 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzcount", TairZsetTypeZcount_RedisCommand)
     CREATE_ROCMD("exzlexcount", TairZsetTypeZlexcount_RedisCommand)
     CREATE_ROCMD("exzmscore", TairZsetTypeZmscore_RedisCommand)
+    CREATE_ROCMD("exzrandmember", TairZsetTypeZrandmember_RedisCommand)
 
     return REDISMODULE_OK;
 }
