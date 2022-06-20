@@ -265,7 +265,7 @@ Note: the command has a complexity of just O(log(N)) because it uses elements ra
 Integer reply: the number of elements in the specified score range.
 
 ### EXZRANDMEMBER
-> EXZRANDMEMBER key [ count [WITHSCORES]]
+> EXZRANDMEMBER key [count [WITHSCORES]]
 > time complexity：O(N) where N is the number of elements returned.
 
 #### Command Description:
