@@ -13,7 +13,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
     proc create_big_tairzset {key item} {
         r del $key
         for {set j 0} {$j < $item} {incr j} {
-            r exzadd $key $j $j
+            r exzadd $key $j#$j#$j $j
         }
     }
 
@@ -1114,6 +1114,125 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
             # df = 9, 40 means 0.00001 probability
             assert { [chi_square_value $allkey] < 40 }
         }
+    }
+
+    test "EXZSCAN basic" {
+        set cur 0
+        set keys {}
+        create_big_tairzset zset 1000
+        while 1 {
+            set res [r exzscan zset $cur]
+            set cur [lindex $res 0]
+            set k [lindex $res 1]
+            lappend keys {*}$k
+            if {$cur == 0} break
+        }
+        assert_equal 2000 [llength $keys]
+    }
+
+    test "EXZSCAN COUNT" {
+        set cur 0
+        set keys {}
+        create_big_tairzset zset 1000
+        while 1 {
+            set res [r exzscan zset $cur count 5]
+            set cur [lindex $res 0]
+            set k [lindex $res 1]
+            lappend keys {*}$k
+            if {$cur == 0} break
+        }
+        assert_equal 2000 [llength $keys]
+    }
+
+    test "EXZSCAN MATCH" {
+        set cur 0
+        set keys {}
+        create_big_tairzset zset 1000
+        while 1 {
+            set res [r exzscan zset $cur match "1??"]
+            set cur [lindex $res 0]
+            set k [lindex $res 1]
+            lappend keys {*}$k
+            if {$cur == 0} break
+        }
+        assert_equal 200 [llength $keys]
+    }
+
+    test "EXZSCAN verify member and score" {
+        # Create the Sorted Set
+        set count 1000
+
+        create_big_tairzset zset $count
+
+        set cur 0
+        set keys {}
+        while 1 {
+            set res [r exzscan zset $cur]
+            set cur [lindex $res 0]
+            set k [lindex $res 1]
+            lappend keys {*}$k
+            if {$cur == 0} break
+        }
+
+        set keys2 {}
+        foreach {k v} $keys {
+            assert {"$k#$k#$k" eq $v}
+            lappend keys2 $k
+        }
+
+        assert_equal $count [llength $keys2]
+    }
+
+    # Random integer between 0 and max (excluded).
+    proc randomInt {max} {
+        expr {int(rand()*$max)}
+    }
+
+    test "EXZSCAN guarantees check under write load" {
+        create_big_tairzset zset 100
+
+        # We start scanning here, so keys from 0 to 99 should all be
+        # reported at the end of the iteration.
+        set keys {}
+        set cur 0
+        while 1 {
+            set res [r exzscan zset $cur]
+            set cur [lindex $res 0]
+            set k [lindex $res 1]
+            lappend keys {*}$k
+            if {$cur == 0} break
+            # Write 10 random keys at every EXZSCAN iteration.
+            for {set j 0} {$j < 10} {incr j} {
+                r set addedkey:[randomInt 1000] foo
+            }
+        }
+
+        set keys2 {}
+        foreach k $keys {
+            # length of "99#99#99" is 9.
+            if {[string length $k] > 9} continue
+            lappend keys2 $k
+        }
+
+        assert_equal 200 [llength $keys2]
+    }
+
+    test "EXZSCAN with PATTERN" {
+        r del mykey
+        r exzadd mykey 1#1.1 foo 2#2.2 fab 3#3.3 fiz 10#9.9 foobar
+        set res [r exzscan mykey 0 MATCH foo* COUNT 10000]
+        set keys [lindex $res 1]
+        assert_equal 4 [llength $keys]
+    }
+
+    test "EXZSCAN scores: regression test for issue #2175 in Redis" {
+        r del mykey
+        for {set j 0} {$j < 500} {incr j} {
+            r exzadd mykey 9.8813129168249309e-323 $j
+        }
+        set res [lindex [r exzscan mykey 0] 1]
+        set first_score [lindex $res 1]
+        assert {$first_score != 0}
     }
 }
 

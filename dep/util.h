@@ -37,6 +37,7 @@
  * as a string (long double has a huge range).
  * This should be the size of the buffer given to ld2string */
 #define MAX_LONG_DOUBLE_CHARS 5*1024
+#define LONG_STR_SIZE      21          /* Bytes needed for long -> str + '\0' */
 
 #if __GNUC__ >= 4
 #define redis_unreachable __builtin_unreachable
