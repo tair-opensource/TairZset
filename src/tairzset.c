@@ -1070,7 +1070,7 @@ void exZscanGernericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
     /* Step 4: Reply to the client. */
     RedisModule_ReplyWithArray(ctx, 2);
     char buf[LONG_STR_SIZE];
-    m_ll2string(buf,LONG_STR_SIZE,cursor);
+    m_ll2string(buf, LONG_STR_SIZE, cursor);
     RedisModule_ReplyWithCString(ctx, buf);
     RedisModule_ReplyWithArray(ctx, listLength(keys));
     while ((node = listFirst(keys)) != NULL) {
@@ -1089,7 +1089,6 @@ void exZscanGernericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
     }
 
 cleanup:
-    listSetFreeMethod(keys, NULL);
     m_listRelease(keys);
 }
 
@@ -1582,7 +1581,7 @@ int TairZsetTypeZscan_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     cursor = strtoul(cursor_str, &eptr, 10);
     if (isspace(cursor_str[0]) || eptr[0] != '\0' || errno == ERANGE)
     {
-        RedisModule_ReplyWithError(ctx, "invalid cursor");
+        RedisModule_ReplyWithError(ctx, "ERR invalid cursor");
         return REDISMODULE_OK;
     }
 
