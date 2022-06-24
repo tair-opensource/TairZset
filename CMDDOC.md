@@ -283,3 +283,22 @@ The optional WITHSCORES modifier changes the reply so it includes the respective
 Bulk string reply: without the additional count argument, the command returns a Bulk Reply with the randomly selected element, or nil when key does not exist.
 
 Array reply: when the additional count argument is passed, the command returns an array of elements, or an empty array when key does not exist. If the WITHSCORES modifier is used, the reply is a list elements and their scores from the sorted set.
+### EXZSCAN
+> EXZSCAN key cursor [MATCH pattern] [COUNT count]
+> time complexity: O(1) for every call. O(N) for a complete iteration, including enough command calls for the cursor to return back to 0. N is the number of elements inside the collection.
+
+#### Command Description:
+
+Iterates elements of TairZset types and their associated scores.
+
+EXSCAN is a cursor based iterator. This means that at every call of the command, the server returns an updated cursor that the user needs to use as the cursor argument in the next call. An iteration starts when the cursor is set to 0, and terminates when the cursor returned by the server is 0. 
+
+While EXSCAN does not provide guarantees about the number of elements returned at every iteration, it is possible to empirically adjust the behavior of EXZSCAN using the COUNT option. Basically with COUNT the user specified the amount of work that should be done at every call in order to retrieve elements from the collection. This is *just a hint* for the implementation, however generally speaking this is what you could expect most of the times from the implementation.
+
+It is possible to only iterate elements matching a given glob-style pattern, similarly to the behavior of the KEYS command that takes a pattern as only argument. To do so, just append the MATCH <pattern> arguments at the end of the EXZSCAN command. It is important to note that the MATCH filter is applied after elements are retrieved from the collection, just before returning data to the client. This means that if the pattern matches very little elements inside the collection, EXZSCAN will likely return no elements in most iterations.
+
+More detail information: https://redis.io/commands/scan/
+
+#### Return value
+
+A two elements multi-bulk reply, where the first element is a string representing an unsigned 64 bit number (the cursor), and the second element is a multi-bulk with an array of elements.

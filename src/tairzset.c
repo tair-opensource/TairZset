@@ -15,6 +15,7 @@
  */
 
 #include "tairzset.h"
+#include "adlist.h"
 
 #include <assert.h>
 #include <ctype.h>
@@ -572,7 +573,7 @@ static void exZaddGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
     }
 
     for (j = 0; j < elements; j++) {
-        scoretype *new_score;
+        scoretype *new_score = NULL;
         score = scores[j];
         int retflags = flags;
 
@@ -689,7 +690,6 @@ void exZrankGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int ar
 #define ZRANGE_LEX 2
 void exZremrangeGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int rangetype) {
     TairZsetObj *zobj;
-    int keyremoved = 0;
     unsigned long deleted = 0;
     m_zrangespec range;
     m_zlexrangespec lexrange;
@@ -769,7 +769,6 @@ void exZremrangeGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, in
     }
     if (dictSize(zobj->dict) == 0) {
         RedisModule_DeleteKey(key);
-        keyremoved = 1;
     }
 
     RedisModule_ReplicateVerbatim(ctx);
@@ -960,6 +959,137 @@ void exZrandMemberWithCountCommand(RedisModuleCtx *ctx, TairZsetObj *zobj, long 
         /* Release memory */
         m_dictRelease(d);
     }
+}
+
+/* This callback is used by exZscanGernericCommand in order to collect elements
+ * returned by the dictionary iterator into a list. */
+void dictScanCallback(void *privdata, const m_dictEntry *de) {
+    void **pd = (void**) privdata;
+    list *keys = pd[0];
+    RedisModuleString *key = dictGetKey(de);;
+    scoretype *val = dictGetVal(de);
+
+    m_listAddNodeTail(keys, key);
+    if (val) m_listAddNodeTail(keys, val);
+}
+
+/* This command implements EXZSCAN commands.
+ *
+ * It returns both the members and scores of the scanned tair zset elements. */
+void exZscanGernericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, TairZsetObj *zobj, unsigned long cursor) {
+    /* Set i to the first option argument. The previous one is cursor. */
+    int i = 3, j;
+    list *keys = m_listCreate();
+    listNode *node, *nextnode;
+    long long count = 10;
+    const char *pat = NULL;
+    size_t patlen;
+    int use_pattern = 0;
+    dict *ht;
+
+    while (i < argc) {
+        j = argc - i;
+        if (!mstringcasecmp(argv[i], "count") && j >= 2) {
+            if (RedisModule_StringToLongLong(argv[i+1], &count) != REDISMODULE_OK) {
+                RedisModule_ReplyWithError(ctx, "ERR value is not an integer or out of range");
+                goto cleanup;
+            }
+
+            if (count < 1) {
+                RedisModule_ReplyWithError(ctx, "ERR syntax error");
+                goto cleanup;
+            }
+
+            i += 2;
+        } else if (!mstringcasecmp(argv[i], "match") && j >= 2) {
+            pat = RedisModule_StringPtrLen(argv[i+1], &patlen);
+
+            /* The pattern always matches if it is exactly "*", so it is
+             * equivalent to disabling it. */
+            use_pattern = !(pat[0] == '*' && patlen == 1);
+
+            i += 2;
+        } else {
+            RedisModule_ReplyWithError(ctx, "ERR syntax error");
+            goto cleanup;
+        }
+    }
+
+    /* Step 2: Iterate the collection. */
+    ht = zobj->dict;
+    count *= 2;
+
+    void *privdata[1];
+    /* We set the max number of iterations to ten times the specified
+     * COUNT, so if the hash table is in a pathological state (very
+     * sparsely populated) we avoid to block too much time at the cost
+     * of returning no or very few elements. */
+    long maxiterations = count*10;
+
+    /* We pass two pointers to the callback: the list to which it will
+     * add new elements, and the object containing the dictionary so that
+     * it is possible to fetch more data in a type-dependent way. */
+    privdata[0] = keys;
+    do {
+        cursor = m_dictScan(ht, cursor, dictScanCallback, NULL, privdata);
+    } while (cursor &&
+            maxiterations-- &&
+            listLength(keys) < (unsigned long)count);
+
+    /* Step 3: Filter elements. */
+    node = listFirst(keys);
+    while (node) {
+        RedisModuleString *member = listNodeValue(node);
+        nextnode = listNextNode(node);
+        int filter = 0;
+        size_t member_str_len;
+        const char * member_str = RedisModule_StringPtrLen(member, &member_str_len);
+        
+        /* Filter element if it does not match the pattern. */
+        if (!filter && 
+            use_pattern && 
+            !m_stringmatchlen(pat, patlen, member_str, member_str_len, 0)) {
+            filter = 1; 
+        }
+
+        /* Remove the element and its associted value if needed. */
+        if (filter) {
+            /* Remove both member and score */
+            m_listDelNode(keys, node);
+            node = nextnode;
+            nextnode = listNextNode(node);
+            m_listDelNode(keys, node);
+        } else {
+            /* skip the score node associated with the member node */
+            node = nextnode;
+            nextnode = listNextNode(node);
+        }
+        node = nextnode;
+    }
+
+    /* Step 4: Reply to the client. */
+    RedisModule_ReplyWithArray(ctx, 2);
+    char buf[LONG_STR_SIZE];
+    m_ll2string(buf, LONG_STR_SIZE, cursor);
+    RedisModule_ReplyWithCString(ctx, buf);
+    RedisModule_ReplyWithArray(ctx, listLength(keys));
+    while ((node = listFirst(keys)) != NULL) {
+        /* member */
+        RedisModuleString *member = listNodeValue(node);
+        RedisModule_ReplyWithString(ctx, member);
+        m_listDelNode(keys, node);
+
+        /* score */
+        node = listFirst(keys);
+        scoretype *score = listNodeValue(node);
+        sds score_str = mscore2String(score);
+        RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+        m_sdsfree(score_str);
+        m_listDelNode(keys, node);
+    }
+
+cleanup:
+    m_listRelease(keys);
 }
 
 /* ========================= "tairzset" type commands =======================*/
@@ -1381,7 +1511,7 @@ int TairZsetTypeZmscore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     return REDISMODULE_OK;
 }
 
-/* EXZRANDMEMBER key [ count [WITHSCORES]] */
+/* EXZRANDMEMBER key [count [WITHSCORES]] */
 int TairZsetTypeZrandmember_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     RedisModule_AutoMemory(ctx);
     if (argc < 2) {
@@ -1432,6 +1562,51 @@ int TairZsetTypeZrandmember_RedisCommand(RedisModuleCtx *ctx, RedisModuleString 
     RedisModule_ReplyWithString(ctx, ele);
     return REDISMODULE_OK;
 }
+
+/* EXZSCAN key cursor [MATCH pattern] [COUNT count] */
+int TairZsetTypeZscan_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }    
+    /* We need an *unsigned* long, 
+     * and RedisModule_StringToLongLong() does not cover the whole cursor space. 
+     * So we use RedisModule_StringPtrLen() to get the cursor string first,
+     * and use strtoul() to get the unsigned long cursor */
+    size_t cursor_str_len;
+    unsigned long cursor;
+    const char *cursor_str = RedisModule_StringPtrLen(argv[2], &cursor_str_len);
+    errno = 0;
+    char *eptr;
+    cursor = strtoul(cursor_str, &eptr, 10);
+    if (isspace(cursor_str[0]) || eptr[0] != '\0' || errno == ERANGE)
+    {
+        RedisModule_ReplyWithError(ctx, "ERR invalid cursor");
+        return REDISMODULE_OK;
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ);
+    int type = RedisModule_KeyType(key);
+    if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+        RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+        return REDISMODULE_ERR;
+    }
+
+    TairZsetObj *tair_zset_obj = NULL;
+    if (type == REDISMODULE_KEYTYPE_EMPTY) {
+        RedisModule_ReplyWithArray(ctx, 2);
+        RedisModule_ReplyWithCString(ctx, "0");
+        RedisModule_ReplyWithArray(ctx, 0);
+        return REDISMODULE_OK;
+    } else {
+        tair_zset_obj = RedisModule_ModuleTypeGetValue(key);
+    }
+
+    exZscanGernericCommand(ctx, argv, argc, tair_zset_obj, cursor);
+
+    return REDISMODULE_OK;
+}
+
 
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
@@ -1614,6 +1789,7 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzlexcount", TairZsetTypeZlexcount_RedisCommand)
     CREATE_ROCMD("exzmscore", TairZsetTypeZmscore_RedisCommand)
     CREATE_ROCMD("exzrandmember", TairZsetTypeZrandmember_RedisCommand)
+    CREATE_ROCMD("exzscan", TairZsetTypeZscan_RedisCommand)
 
     return REDISMODULE_OK;
 }
