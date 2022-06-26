@@ -59,6 +59,104 @@ static int mstringcasecmp(const RedisModuleString *rs1, const char *s2) {
     return strncasecmp(s1, s2, n1);
 }
 
+static unsigned long exZsetLength(const TairZsetObj *zobj) {
+    return zobj->zsl->length;
+}
+
+
+/* ========================= "tairzset" set operations =======================*/
+
+/* Sets operations codes */
+#define SET_OP_UNION 0
+#define SET_OP_DIFF 1
+#define SET_OP_INTER 2
+/* Sets aggregation types */
+#define AGGR_SUM 1
+#define AGGR_MIN 2
+#define AGGR_MAX 3
+
+typedef struct {
+    TairZsetObj *subject;
+    double weight;
+    struct _zset_iter {
+        TairZsetObj *zs;
+        m_zskiplistNode *node;
+    } zset_iter;
+} zsetopsrc;
+
+typedef struct _zset_iter iterzset;
+
+/* Use dirty flags for pointers that need to be cleaned up in the next
+ * iteration over the zsetopval. The dirty flag for the long long value is
+ * special, since long long values don't need cleanup. Instead, it means that
+ * we already checked that "ell" holds a long long, or tried to convert another
+ * representation into a long long value. When this was successful,
+ * OPVAL_VALID_LL is set as well. */
+#define OPVAL_DIRTY_SDS 1
+#define OPVAL_DIRTY_LL 2
+#define OPVAL_VALID_LL 4
+
+/* Store value retrieved from the iterator. */
+typedef struct {
+    RedisModuleString *ele;
+    scoretype *score;
+} zsetopval;
+
+/* uid means union, inter, diff */
+
+unsigned long exZuidLength(zsetopsrc *op) {
+    if (op->subject == NULL) {
+        return 0;
+    }
+    return exZsetLength(op->subject);
+}
+
+int exZuidCompareByCardinality(const void *s1, const void *s2) {
+    unsigned long first = exZuidLength((zsetopsrc *)s1);
+    unsigned long second = exZuidLength((zsetopsrc *)s2);
+    if (first > second) return 1;
+    if (first < second) return -1;
+    return 0;
+}
+
+void exZuidInitIterator(zsetopsrc *op) {
+    if (op->subject == NULL) {
+        return;
+    }
+    iterzset *it = &op->zset_iter;
+    it->zs = op->subject;
+    it->node = it->zs->zsl->tail;
+}
+
+/* Check if the current value is valid. If so, store it in the passed structure
+ * and move to the next element. If not valid, this means we have reached the
+ * end of the structure and can abort. */
+int exZuidNext(zsetopsrc *op, zsetopval *val) {
+    if (op->subject == NULL) {
+        return 0;
+    }
+    memset(val, 0, sizeof(zsetopval));
+    iterzset *it = &op->zset_iter;
+    if (it->node == NULL)
+        return 0;
+    val->ele = it->node->ele;
+    val->score = it->node->score;
+
+    /* Move to next element. (going backwards, see exZuidInitIterator) */
+    it->node = it->node->backward;
+    return 1;
+}
+
+inline static void exZunionInterAggregate(scoretype *target, scoretype *score, int aggregate) {
+    if (aggregate == AGGR_SUM) {
+        mscoreAddIgnoreNan(target, score);
+    } else if (aggregate == AGGR_MIN && mscoreCmp(target, score) > 0) {
+        mscoreAssign(target, score);   
+    } else if (aggregate == AGGR_MAX && mscoreCmp(target, score) < 0) {
+        mscoreAssign(target, score);   
+    }
+}
+
 /* ========================= "tairzset" common functions =======================*/
 static int exZsetScore(TairZsetObj *obj, RedisModuleString *member, scoretype **score) {
     if (!obj || !member) {
@@ -73,10 +171,6 @@ static int exZsetScore(TairZsetObj *obj, RedisModuleString *member, scoretype **
     *score = (scoretype *)dictGetVal(de);
 
     return C_OK;
-}
-
-static unsigned long exZsetLength(const TairZsetObj *zobj) {
-    return zobj->zsl->length;
 }
 
 /* This command implements ZRANGEBYLEX, ZREVRANGEBYLEX. */
@@ -966,7 +1060,7 @@ void exZrandMemberWithCountCommand(RedisModuleCtx *ctx, TairZsetObj *zobj, long 
 void dictScanCallback(void *privdata, const m_dictEntry *de) {
     void **pd = (void**) privdata;
     list *keys = pd[0];
-    RedisModuleString *key = dictGetKey(de);;
+    RedisModuleString *key = dictGetKey(de);
     scoretype *val = dictGetVal(de);
 
     m_listAddNodeTail(keys, key);
@@ -1090,6 +1184,227 @@ void exZscanGernericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int a
 
 cleanup:
     m_listRelease(keys);
+}
+
+/* The exZunionInterDiffGenericCommand() function is called in order to implement the
+ * following commands: EXZUNION, EXZINTER, EXZDIFF, EXZUNIONSTORE, EXZINTERSTORE, EXZDIFFSTORE.
+ *
+ * 'numkeysIndex' parameter position of key number. for EXZUNION/EXZINTER/EXZDIFF command,
+ * this value is 1, for EXZUNIONSTORE/EXZINTERSTORE/EXZDIFFSTORE command, this value is 2.
+ *
+ * 'op' SET_OP_INTER, SET_OP_UNION or SET_OP_DIFF.
+ */
+void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RedisModuleKey *dstKey, int numkeysIndex, int op) {
+    int i, j;
+    long long setnum;
+    int aggregate = AGGR_SUM;
+    int scorenum = -1;
+    zsetopsrc *src;
+    zsetopval zval;
+    RedisModuleString *tmp;
+    scoretype *score;
+    TairZsetObj *dstzobj;
+    m_zskiplistNode *znode;
+    int withscores = 0;
+
+    if (RedisModule_StringToLongLong(argv[numkeysIndex], &setnum) != REDISMODULE_OK) {
+        RedisModule_ReplyWithError(ctx, "ERR value is not an integer or out of range");
+        return;
+    }
+
+    if (setnum < 1) {
+        RedisModule_ReplyWithError(ctx, "ERR at least 1 input key is needed");
+        return;
+    }
+
+    /* test if the expected number of keys would overflow */
+    if (setnum > argc - numkeysIndex - 1) {
+        RedisModule_ReplyWithError(ctx, "ERR syntax error");
+        return;
+    }
+
+    /* read keys to be used for input */
+    src = RedisModule_Alloc(sizeof(zsetopsrc) * setnum);
+    for (i = 0, j = numkeysIndex + 1; i < setnum; i++, j++) {
+        RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[j], REDISMODULE_READ);
+        int type = RedisModule_KeyType(key);
+        if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+            RedisModule_Free(src);
+            RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+            return;
+        }
+        TairZsetObj *tair_zset_obj = NULL;
+        if (type != REDISMODULE_KEYTYPE_EMPTY) {
+            tair_zset_obj = RedisModule_ModuleTypeGetValue(key);
+            if (scorenum == -1) {
+                scorenum = tair_zset_obj->zsl->score_num;
+            } else if (tair_zset_obj->zsl->score_num != scorenum) {
+                RedisModule_Free(src);
+                RedisModule_ReplyWithError(ctx, "ERR score is not a valid format");
+                return;
+            }
+        }
+        src[i].subject = tair_zset_obj;
+        /* Default all weights to 1. */
+        src[i].weight = 1.0;
+    }
+
+    /* parse optional extra arguments */
+    if (j < argc) {
+        int remaining = argc - j;
+        while (remaining) {
+            /* OP_DIFF does not have optional extra arguments */
+            if (op != SET_OP_DIFF &&
+                remaining >= (setnum + 1) &&
+                !mstringcasecmp(argv[j], "WEIGHTS")) {
+                j++;
+                remaining--;
+                for (i = 0; i < setnum; i++, j++, remaining--) {
+                    if (RedisModule_StringToDouble(argv[j], &src[i].weight) != REDISMODULE_OK) {
+                        RedisModule_Free(src);
+                        RedisModule_ReplyWithError(ctx, "ERR weight value is not a float");
+                        return;
+                    }
+                }
+            } else if (op != SET_OP_DIFF &&
+                        remaining >= 2 &&
+                        !mstringcasecmp(argv[j], "AGGREGATE")) {
+                j++;
+                remaining--;
+                if (!mstringcasecmp(argv[j], "SUM")) {
+                    aggregate = AGGR_SUM;
+                } else if (!mstringcasecmp(argv[j], "MIN")) {
+                    aggregate = AGGR_MIN;
+                } else if (!mstringcasecmp(argv[j], "MAX")) {
+                    aggregate = AGGR_MAX;
+                } else {
+                    RedisModule_Free(src);
+                    RedisModule_ReplyWithError(ctx, "ERR syntax error");
+                    return;
+                }
+                j++;
+                remaining--;
+            } else if (remaining >= 1 &&
+                        !dstKey &&
+                        !mstringcasecmp(argv[j], "WITHSCORES")) {
+
+                j++;
+                remaining--;
+                withscores = 1;
+            } else {
+                RedisModule_Free(src);
+                RedisModule_ReplyWithError(ctx, "ERR syntax error");
+                return;
+            }
+        }
+    }
+
+    if (op != SET_OP_DIFF) {
+        /* sort sets from the smallest to largest, this will improve our
+        * algorithm's performance */
+        qsort(src, setnum, sizeof(zsetopsrc), exZuidCompareByCardinality);
+    }
+
+    dstzobj = createTairZsetTypeObject(scorenum);
+    memset(&zval, 0, sizeof(zsetopval));
+
+    if (op == SET_OP_UNION) {
+        dict *accumulator = m_dictCreate(&tairZsetDictType, NULL);
+        m_dictIterator *di;
+        m_dictEntry *de, *existing = NULL;
+        if (setnum) {
+            /* Our union is at least as large as the largest set.
+             * Resize the dictionary ASAP to avoid useless rehashing. */
+            m_dictExpand(accumulator, exZuidLength(&src[setnum - 1]));
+        }
+        /* Step 1: Create a dictionary of elements -> aggregated-scores
+         * by iterating one sorted set after the other. */
+        for (i = 0; i < setnum; i++) {
+            if (exZuidLength(&src[i]) == 0) continue;
+
+            exZuidInitIterator(&src[i]);
+            while (exZuidNext(&src[i], &zval)) {
+                /* Initialize value */
+                score = mnewScore(scorenum);
+                mscoreMulWithWeight(score, zval.score, src[i].weight);
+
+                /* Search for this element in the accumulating dictionary. */
+                de = m_dictAddRaw(accumulator, zval.ele, &existing);
+                /* If we don't have it, we need to create a new entry. */
+                if (!existing) {
+                    /* the first arg cannot be ctx, 
+                     * or the memory will be managed by Redis, we can't let this happen. 
+                     * If needed, it will be release by TairZsetTypeReleaseObject() later */
+                    tmp = RedisModule_CreateStringFromString(NULL, zval.ele);
+                    /* Update the element with its initial score. */
+                    dictSetKey(accumulator, de, tmp);
+                    dictSetVal(accumulator, de, score);
+                } else {
+                    /* Update the score with the score of the new instance
+                     * of the element found in the current sorted set. */
+                    exZunionInterAggregate(existing->v.val, score, aggregate);
+                    RedisModule_Free(score);
+                }
+            }
+        }
+
+        /* Step 2: convert the dictionary into the final sorted set. */
+        di = m_dictGetIterator(accumulator);
+
+        /* We now are aware of the final size of the resulting sorted set,
+         * let's resize the dictionary embedded inside the sorted set to the
+         * right size, in order to save rehashing time. */
+        m_dictExpand(dstzobj->dict, dictSize(accumulator));
+
+        /* We don't use exZsetAdd() becasue we don't need to call m_dictFind() */
+        while((de = m_dictNext(di)) != NULL) {
+            RedisModuleString *ele = dictGetKey(de);
+            scoretype *score = dictGetVal(de);
+            znode = m_zslInsert(dstzobj->zsl, score, ele);
+            m_dictAdd(dstzobj->dict, ele, znode->score);
+        }
+        m_dictReleaseIterator(di);
+        m_dictRelease(accumulator);
+    } else if (op == SET_OP_INTER) {
+        /* TODO */
+    } else if (op == SET_OP_DIFF) {
+        /* TODO */
+    }
+
+    if (dstKey) {
+        unsigned long length = dstzobj->zsl->length;
+        /* overwrite if dstkey already exists */
+        if (length) {
+            RedisModule_ModuleTypeSetValue(dstKey, TairZsetType, dstzobj);
+        } else {
+            RedisModule_DeleteKey(dstKey);
+        }
+        RedisModule_ReplyWithLongLong(ctx, length);
+        RedisModule_ReplicateVerbatim(ctx);
+    } else {
+        unsigned long length = dstzobj->zsl->length;
+        m_zskiplist *zsl = dstzobj->zsl;
+        m_zskiplistNode *zn = zsl->header->level[0].forward;
+
+        if (withscores)
+            RedisModule_ReplyWithArray(ctx, length * 2);
+        else
+            RedisModule_ReplyWithArray(ctx, length);
+
+        while (zn != NULL) {
+            RedisModule_ReplyWithString(ctx, zn->ele);
+            if (withscores) {
+                sds score_str = mscore2String(zn->score);
+                RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+                m_sdsfree(score_str);
+            } 
+            zn = zn->level[0].forward;
+        }
+
+        TairZsetTypeReleaseObject(dstzobj);
+    }
+
+    RedisModule_Free(src);
 }
 
 /* ========================= "tairzset" type commands =======================*/
@@ -1607,6 +1922,28 @@ int TairZsetTypeZscan_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     return REDISMODULE_OK;
 }
 
+/* EXZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] */
+int TairZsetTypeZunionstore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 4) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
+
+    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_UNION);
+    return REDISMODULE_OK;
+}
+
+/* EXZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES] */
+int TairZsetTypeZunion_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_UNION);
+    return REDISMODULE_OK;
+}
 
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
@@ -1790,6 +2127,8 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzmscore", TairZsetTypeZmscore_RedisCommand)
     CREATE_ROCMD("exzrandmember", TairZsetTypeZrandmember_RedisCommand)
     CREATE_ROCMD("exzscan", TairZsetTypeZscan_RedisCommand)
+    CREATE_ROCMD("exzunionstore", TairZsetTypeZunionstore_RedisCommand)
+    CREATE_ROCMD("exzunion", TairZsetTypeZunion_RedisCommand)
 
     return REDISMODULE_OK;
 }

@@ -88,3 +88,7 @@ int mscoreParse(const char *s, size_t slen, scoretype **score);
 int mscoreCmp(scoretype *s1, scoretype *s2);
 sds mscore2String(scoretype *score);
 int mscoreAdd(scoretype *s1, scoretype *s2);
+void mscoreAddIgnoreNan(scoretype *s1, scoretype *s2);
+scoretype *mnewScore(int score_num);
+void mscoreMulWithWeight(scoretype *dst, scoretype *base, double weight);
+void mscoreAssign(scoretype *target, scoretype *src);
