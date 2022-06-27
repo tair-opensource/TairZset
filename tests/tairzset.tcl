@@ -1234,6 +1234,116 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         set first_score [lindex $res 1]
         assert {$first_score != 0}
     }
+
+    test "EXZUNIONSTORE against non-existing key doesn't set destination" {
+        r del zseta
+        assert_equal 0 [r exzunionstore dst_key 1 zseta]
+        assert_equal 0 [r exists dst_key]
+    }
+
+    test "EXZUNION against non-existing key" {
+        r del zseta
+        assert_equal {} [r exzunion 1 zseta]
+    }
+
+    test "EXZUNIONSTORE with empty set" {
+        r del zseta zsetb
+        r exzadd zseta 1#2 a
+        r exzadd zseta 2#3 b
+        r exzunionstore zsetc 2 zseta zsetb
+        r exzrange zsetc 0 -1 withscores
+    } {a 1#2 b 2#3}
+
+    test "EXZUNION with empty set" {
+        r del zseta zsetb
+        r exzadd zseta 1#2 a
+        r exzadd zseta 2#3 b
+        assert_equal {a 1#2 b 2#3} [r exzunion 2 zseta zsetb withscores]
+    }
+
+    test "EXZUNIONSTORE basics" {
+        r del zseta zsetb zsetc
+        r exzadd zseta 1#2 a
+        r exzadd zseta 2#3 b
+        r exzadd zseta 3#4 c
+        r exzadd zsetb 1#2 b
+        r exzadd zsetb 2#3 c
+        r exzadd zsetb 3#4 d
+
+        assert_equal 4 [r exzunionstore zsetc 2 zseta zsetb]
+        assert_equal {a 1#2 d 3#4 b 3#5 c 5#7} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZUNION with integer members" {
+        r del zsetd zsetf
+        r exzadd zsetd 1#1 1
+        r exzadd zsetd 2#2 2
+        r exzadd zsetd 3#3 3
+        r exzadd zsetf 1#1 1
+        r exzadd zsetf 3#3 3
+        r exzadd zsetf 4#4 4
+
+        assert_equal {1 2#2 2 2#2 4 4#4 3 6#6} [r exzunion 2 zsetd zsetf withscores]
+    }
+
+    test "EXZUNIONSTORE with weights" {
+        assert_equal 4 [r exzunionstore zsetc 2 zseta zsetb weights 2 3]
+        assert_equal {a 2#4 b 7#12 d 9#12 c 12#17} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZUNION with weights" {
+        assert_equal {a 2#4 b 7#12 d 9#12 c 12#17} [r exzunion 2 zseta zsetb weights 2 3 withscores]
+    }
+
+    test "EXZUNIONSTORE with AGGREGATE MIN" {
+        assert_equal 4 [r exzunionstore zsetc 2 zseta zsetb aggregate min]
+        assert_equal {a 1#2 b 1#2 c 2#3 d 3#4} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZUNION with AGGREGATE MIN" {
+        assert_equal {a 1#2 b 1#2 c 2#3 d 3#4} [r exzunion 2 zseta zsetb aggregate min withscores]
+    }
+
+    test "EXZUNIONSTORE with AGGREGATE MAX" {
+        assert_equal 4 [r exzunionstore zsetc 2 zseta zsetb aggregate max]
+        assert_equal {a 1#2 b 2#3 c 3#4 d 3#4} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZUNION with AGGREGATE MAX" {
+        assert_equal {a 1#2 b 2#3 c 3#4 d 3#4} [r exzunion 2 zseta zsetb aggregate max withscores]
+    }
+
+    test {EXZUNIONSTORE regression, should not create NaN in scores} {
+        r exzadd z -inf neginf
+        r exzunionstore out 1 z weights 0 
+        r exzrange out 0 -1 withscores
+    } {neginf 0}
+
+    test {EXZUNIONSTORE result is sorted} {
+        # Create two sets with common and not common elements, perform
+        # the UNION, check that elements are still sorted.
+        r del one two dest
+        set cmd1 [list r exzadd one]
+        set cmd2 [list r exzadd two]
+        for {set j 0} {$j < 1000} {incr j} {
+            lappend cmd1 [expr rand()] [randomInt 1000]
+            lappend cmd2 [expr rand()] [randomInt 1000]
+        }
+        {*}$cmd1
+        {*}$cmd2
+        assert {[r exzcard one] > 100}
+        assert {[r exzcard two] > 100}
+        r exzunionstore dest 2 one two
+        set oldscore 0
+        foreach {ele score} [r exzrange dest 0 -1 withscores] {
+            assert {$score >= $oldscore}
+            set oldscore $score
+        }
+    }
+
+    test "EXZUNIONSTORE error if using WITHSCORES " {
+        assert_error "*ERR*syntax*" {r exzunionstore foo 2 zsetd zsetf withscores}
+    }
 }
 
 start_server {tags {"repl test"} overrides {bind 0.0.0.0}} {

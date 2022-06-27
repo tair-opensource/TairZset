@@ -1356,7 +1356,7 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
          * right size, in order to save rehashing time. */
         m_dictExpand(dstzobj->dict, dictSize(accumulator));
 
-        /* We don't use exZsetAdd() becasue we don't need to call m_dictFind() */
+        /* We don't use exZsetAdd() because we don't need to call m_dictFind() */
         while((de = m_dictNext(di)) != NULL) {
             RedisModuleString *ele = dictGetKey(de);
             scoretype *score = dictGetVal(de);

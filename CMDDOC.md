@@ -302,3 +302,39 @@ More detail information: https://redis.io/commands/scan/
 #### Return value
 
 A two elements multi-bulk reply, where the first element is a string representing an unsigned 64 bit number (the cursor), and the second element is a multi-bulk with an array of elements.
+
+### EXUNIONSTORE
+
+> EXZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]
+> time complexity: O(N)+O(M log(M)) with N being the sum of the sizes of the input sorted sets, and M being the number of elements in the resulting sorted set.
+
+#### Command Description:
+
+Computes the union of numkeys sorted sets given by the specified keys, and stores the result in destination. It is mandatory to provide the number of input keys (numkeys) before passing the input keys and the other (optional) arguments.
+
+By default, the resulting score of an element is the sum of its scores in the sorted sets where it exists.
+
+Using the WEIGHTS option, it is possible to specify a multiplication factor for each input sorted set. This means that the score of every element in every input sorted set is multiplied by this factor before being passed to the aggregation function. When WEIGHTS is not given, the multiplication factors default to 1.
+
+With the AGGREGATE option, it is possible to specify how the results of the union are aggregated. This option defaults to SUM, where the score of an element is summed across the inputs where it exists. When this option is set to either MIN or MAX, the resulting set will contain the minimum or maximum score of an element across the inputs where it exists.
+
+If destination already exists, it is overwritten.
+
+#### Return value
+
+Integer reply: the number of elements in the resulting sorted set at destination.
+
+### EXUNION
+
+> ZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]
+> time complexity: O(N)+O(M*log(M)) with N being the sum of the sizes of the input sorted sets, and M being the number of elements in the resulting sorted set.
+
+#### Command Description:
+
+This command is similar to ZUNIONSTORE, but instead of storing the resulting sorted set, it is returned to the client.
+
+For a description of the WEIGHTS and AGGREGATE options, see ZUNIONSTORE.
+
+#### Return value
+
+Array reply: the result of union (optionally with their scores, in case the WITHSCORES option is given).
