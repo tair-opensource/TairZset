@@ -794,10 +794,11 @@ void mscoreAddIgnoreNan(scoretype *s1, scoretype *s2) {
     assert(s2 != NULL);
     assert(s1->score_num == s2->score_num);
 
-    int i = 0;
-    for (; i < s1->score_num; i++) {
+    for (int i = 0; i < s1->score_num; i++) {
         s1->scores[i] += s2->scores[i];
         if (isnan(s1->scores[i])) {
+            /* If one dimension of the score become NaN,
+             * set it to 0. */
             s1->scores[i] = 0;
         }
     }
@@ -814,9 +815,10 @@ void mscoreMulWithWeight(scoretype *dst, scoretype *base, double weight) {
     assert(base != NULL);
     assert(dst->score_num == base->score_num);
 
-    int i = 0;
-    for (i = 0; i < dst->score_num; i++) {
+    for (int i = 0; i < dst->score_num; i++) {
         dst->scores[i] = base->scores[i] * weight;
+        /* If one dimension of the score become NaN,
+         * set it to 0. */
         if (isnan(dst->scores[i])) {
             dst->scores[i] = 0;
         }
@@ -828,8 +830,7 @@ void mscoreAssign(scoretype *target, scoretype *src) {
     assert(src != NULL);
     assert(target->score_num == src->score_num);
 
-    int i = 0;
-    for (i = 0; i < target->score_num; i++) {
+    for (int i = 0; i < target->score_num; i++) {
         target->scores[i] = src->scores[i];
     }
 }

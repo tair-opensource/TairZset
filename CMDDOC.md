@@ -318,6 +318,8 @@ Using the WEIGHTS option, it is possible to specify a multiplication factor for 
 
 With the AGGREGATE option, it is possible to specify how the results of the union are aggregated. This option defaults to SUM, where the score of an element is summed across the inputs where it exists. When this option is set to either MIN or MAX, the resulting set will contain the minimum or maximum score of an element across the inputs where it exists.
 
+If one dimension of the multiple score of a member become NaN during WEIGHTS or AGGREGATE operations, the dimension of the score will be set to 0.
+
 If destination already exists, it is overwritten.
 
 #### Return value
