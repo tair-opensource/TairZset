@@ -788,3 +788,49 @@ int mscoreAdd(scoretype *s1, scoretype *s2) {
 
     return 0;
 }
+
+void mscoreAddIgnoreNan(scoretype *s1, scoretype *s2) {
+    assert(s1 != NULL);
+    assert(s2 != NULL);
+    assert(s1->score_num == s2->score_num);
+
+    for (int i = 0; i < s1->score_num; i++) {
+        s1->scores[i] += s2->scores[i];
+        if (isnan(s1->scores[i])) {
+            /* If one dimension of the score become NaN,
+             * set it to 0. */
+            s1->scores[i] = 0;
+        }
+    }
+}
+
+scoretype *mnewScore(int score_num) {
+    scoretype *score = (scoretype *)rm_calloc(1, sizeof(scoretype) + score_num * sizeof(double));
+    score->score_num = score_num;
+    return score;
+}
+
+void mscoreMulWithWeight(scoretype *dst, scoretype *base, double weight) {
+    assert(dst != NULL);
+    assert(base != NULL);
+    assert(dst->score_num == base->score_num);
+
+    for (int i = 0; i < dst->score_num; i++) {
+        dst->scores[i] = base->scores[i] * weight;
+        /* If one dimension of the score become NaN,
+         * set it to 0. */
+        if (isnan(dst->scores[i])) {
+            dst->scores[i] = 0;
+        }
+    }
+}
+
+void mscoreAssign(scoretype *target, scoretype *src) {
+    assert(target != NULL);
+    assert(src != NULL);
+    assert(target->score_num == src->score_num);
+
+    for (int i = 0; i < target->score_num; i++) {
+        target->scores[i] = src->scores[i];
+    }
+}
