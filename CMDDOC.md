@@ -303,7 +303,7 @@ More detail information: https://redis.io/commands/scan/
 
 A two elements multi-bulk reply, where the first element is a string representing an unsigned 64 bit number (the cursor), and the second element is a multi-bulk with an array of elements.
 
-### EXUNIONSTORE
+### EXZUNIONSTORE
 
 > EXZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]
 > time complexity: O(N)+O(M log(M)) with N being the sum of the sizes of the input sorted sets, and M being the number of elements in the resulting sorted set.
@@ -326,9 +326,9 @@ If destination already exists, it is overwritten.
 
 Integer reply: the number of elements in the resulting sorted set at destination.
 
-### EXUNION
+### EXZUNION
 
-> ZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]
+> EXZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]
 > time complexity: O(N)+O(M*log(M)) with N being the sum of the sizes of the input sorted sets, and M being the number of elements in the resulting sorted set.
 
 #### Command Description:
@@ -340,3 +340,40 @@ For a description of the WEIGHTS and AGGREGATE options, see ZUNIONSTORE.
 #### Return value
 
 Array reply: the result of union (optionally with their scores, in case the WITHSCORES option is given).
+
+
+### EXZINTERSTORE
+
+> EXZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]
+> time complexity: O(NK)+O(Mlog(M)) worst case with N being the smallest input sorted set, K being the number of input sorted sets and M being the number of elements in the resulting sorted set.
+
+#### Command Description:
+
+Computes the intersection of numkeys sorted sets given by the specified keys, and stores the result in destination. It is mandatory to provide the number of input keys (numkeys) before passing the input keys and the other (optional) arguments.
+
+By default, the resulting score of an element is the sum of its scores in the sorted sets where it exists. Because intersection requires an element to be a member of every given sorted set, this results in the score of every element in the resulting sorted set to be equal to the number of input sorted sets.
+
+For a description of the WEIGHTS and AGGREGATE options, see EXZUNIONSTORE.
+
+If one dimension of the multiple score of a member become NaN during WEIGHTS or AGGREGATE operations, the dimension of the score will be set to 0.
+
+If destination already exists, it is overwritten.
+
+#### Return value
+
+Integer reply: the number of elements in the resulting sorted set at destination.
+
+### EXZINTER
+
+> EXZINTER numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]
+> time complexity: O(NK)+O(Mlog(M)) worst case with N being the smallest input sorted set, K being the number of input sorted sets and M being the number of elements in the resulting sorted set.
+
+#### Command Descriptions:
+
+This command is similar to EXZINTERSTORE, but instead of storing the resulting sorted set, it is returned to the client.
+
+For a description of the WEIGHTS and AGGREGATE options, see EXZUNIONSTORE.
+
+#### Return value
+
+Array reply: the result of intersection (optionally with their scores, in case the WITHSCORES option is given).
