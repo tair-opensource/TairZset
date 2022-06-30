@@ -1204,6 +1204,159 @@ cleanup:
     m_listRelease(keys);
 }
 
+static int exZsetChooseDiffAlgorithm(zsetopsrc *src, long setnum) {
+    int j;
+
+    /* Select what DIFF algorithm to use.
+     *
+     * Algorithm 1 is O(N*M + K*log(K)) where N is the size of the
+     * first set, M the total number of sets, and K is the size of the
+     * result set.
+     *
+     * Algorithm 2 is O(L + (N-K)log(N)) where L is the total number of elements
+     * in all the sets, N is the size of the first set, and K is the size of the
+     * result set.
+     *
+     * We compute what is the best bet with the current input here. */
+    long long algo_one_work = 0;
+    long long algo_two_work = 0;
+
+    for (j = 0; j < setnum; j++) {
+        /* If any other set is equal to the first set, there is nothing to be
+         * done, since we would remove all elements anyway. */
+        if (j > 0 && src[0].subject == src[j].subject) {
+            return 0;
+        }
+
+        algo_one_work += exZuidLength(&src[0]);
+        algo_two_work += exZuidLength(&src[j]);
+    }
+
+    /* Algorithm 1 has better constant times and performs less operations
+     * if there are elements in common. Give it some advantage. */
+    algo_one_work /= 2;
+    return (algo_one_work <= algo_two_work) ? 1 : 2;
+}
+
+static void exZdiffAlgorithm1(zsetopsrc *src, long setnum, TairZsetObj *dstzset) {
+    /* DIFF Algorithm 1:
+     *
+     * We perform the diff by iterating all the elements of the first set,
+     * and only adding it to the target set if the element does not exist
+     * into all the other sets.
+     *
+     * This way we perform at max N*M operations, where N is the size of
+     * the first set, and M the number of sets.
+     *
+     * There is also a O(K*log(K)) cost for adding the resulting elements
+     * to the target set, where K is the final size of the target set.
+     *
+     * The final complexity of this algorithm is O(N*M + K*log(K)). */
+    int j;
+    zsetopval zval;
+    m_zskiplistNode *znode;
+    RedisModuleString *tmp;
+
+    /* With algorithm 1 it is better to order the sets to subtract
+     * by decreasing size, so that we are more likely to find
+     * duplicated elements ASAP. */
+    qsort(src + 1, setnum - 1, sizeof(zsetopsrc), exZuidCompareByCardinality);
+    memset(&zval, 0, sizeof(zval));
+    exZuidInitIterator(&src[0]);
+    while (exZuidNext(&src[0], &zval)) {
+        scoretype *score = mnewScore(zval.score->score_num);
+        mscoreAssign(score, zval.score);
+        int exists = 0;
+
+        for (j = 1; j < setnum; j++) {
+            /* It is not safe to access the zset we are
+             * iterating, so explicitly check for equal object.
+             * This check isn't really needed anymore since we already
+             * check for a duplicate set in the zsetChooseDiffAlgorithm
+             * function, but we're leaving it for future-proofing. */
+            if (src[j].subject == src[0].subject ||
+                exZuidFind(&src[j], &zval, score)) {
+                exists = 1;
+                break;
+            }
+        }
+
+        if (!exists) {
+            tmp = RedisModule_CreateStringFromString(NULL, zval.ele);
+            znode = m_zslInsert(dstzset->zsl, score, tmp);
+            m_dictAdd(dstzset->dict, tmp, znode->score);
+        } else {
+            RedisModule_Free(score);
+        }
+    }
+}
+
+
+static void exZdiffAlgorithm2(zsetopsrc *src, long setnum, TairZsetObj *dstzset) {
+    /* DIFF Algorithm 2:
+     *
+     * Add all the elements of the first set to the auxiliary set.
+     * Then remove all the elements of all the next sets from it.
+     *
+
+     * This is O(L + (N-K)log(N)) where L is the sum of all the elements in every
+     * set, N is the size of the first set, and K is the size of the result set.
+     *
+     * Note that from the (L-N) dict searches, (N-K) got to the exZsetRemoveFromSkiplist
+     * which costs log(N)
+     *
+     * There is also a O(K) cost at the end for finding the largest element
+     * size, but this doesn't change the algorithm complexity since K < L, and
+     * O(2L) is the same as O(L). */
+    int j;
+    int cardinality = 0;
+    zsetopval zval;
+    m_zskiplistNode *znode;
+    RedisModuleString *tmp;
+    scoretype *score;
+    for (j = 0; j < setnum; j++) {
+        if (exZuidLength(&src[j]) == 0) continue;
+
+        memset(&zval, 0, sizeof(zval));
+        exZuidInitIterator(&src[j]);
+        while (exZuidNext(&src[j], &zval)) {
+            if (j == 0) {
+                score = mnewScore(zval.score->score_num);
+                mscoreAssign(score, zval.score);
+                tmp = RedisModule_CreateStringFromString(NULL, zval.ele);
+                znode = m_zslInsert(dstzset->zsl, score, tmp);
+                m_dictAdd(dstzset->dict, tmp, znode->score);
+                cardinality++;
+            } else {
+                if (exZsetRemoveFromSkiplist(dstzset, zval.ele)) {
+                    cardinality--;
+                }
+            }
+
+            /* Exit if result set is empty as any additional removal
+             * of elements will have no effect. */
+            if (cardinality == 0) break;
+        }
+
+        if (cardinality == 0) break;
+    }
+
+    /* Redize dict if needed after removing multiple elements */
+    if (m_htNeedsResize(dstzset->dict)) m_dictResize(dstzset->dict);
+}
+
+static void exZdiff(zsetopsrc *src, long setnum, TairZsetObj *dstzset) {
+    /* Skip everything if the smallest input is empty. */
+    if (exZuidLength(&src[0]) > 0) {
+        int diff_algo = exZsetChooseDiffAlgorithm(src, setnum);
+        if (diff_algo == 1) {
+            exZdiffAlgorithm1(src, setnum, dstzset);
+        } else if (diff_algo == 2) {
+            exZdiffAlgorithm2(src, setnum, dstzset);
+        }
+    }
+}
+
 /* The exZunionInterDiffGenericCommand() function is called in order to implement the
  * following commands: EXZUNION, EXZINTER, EXZDIFF, EXZUNIONSTORE, EXZINTERSTORE, EXZDIFFSTORE.
  *
@@ -1420,7 +1573,7 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
             RedisModule_Free(value);
         }
     } else if (op == SET_OP_DIFF) {
-        /* TODO */
+        exZdiff(src, setnum, dstzobj);
     }
 
     if (dstKey) {
@@ -2020,6 +2173,29 @@ int TairZsetTypeZinter_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **arg
     return REDISMODULE_OK;
 }
 
+/* EXZDIFFSTORE destination numkeys key [key ...] */
+int TairZsetTypeZdiffstore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 4) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
+
+    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_DIFF);
+    return REDISMODULE_OK;
+}
+
+/* EXZDIFF numkeys key [key ...] */
+int TairZsetTypeZdiff_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_DIFF);
+    return REDISMODULE_OK;
+}
+
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
     REDISMODULE_NOT_USED(encver);
@@ -2185,6 +2361,7 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_WRCMD("exzremrangebylex", TairZsetTypeZremrangebylex_RedisCommand)
     CREATE_WRCMD("exzunionstore", TairZsetTypeZunionstore_RedisCommand)
     CREATE_WRCMD("exzinterstore", TairZsetTypeZinterstore_RedisCommand)
+    CREATE_WRCMD("exzdiffstore", TairZsetTypeZdiffstore_RedisCommand)
 
     /* read cmd */
     CREATE_ROCMD("exzscore", TairZsetTypeZscore_RedisCommand)
@@ -2206,6 +2383,7 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzscan", TairZsetTypeZscan_RedisCommand)
     CREATE_ROCMD("exzunion", TairZsetTypeZunion_RedisCommand)
     CREATE_ROCMD("exzinter", TairZsetTypeZinter_RedisCommand)
+    CREATE_ROCMD("exzdiff", TairZsetTypeZdiff_RedisCommand)
 
     return REDISMODULE_OK;
 }
