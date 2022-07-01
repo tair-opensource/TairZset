@@ -1241,9 +1241,10 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal 0 [r exists dst_key]
     }
 
-    test "EXZUNION against non-existing key" {
+    test "EXZUNION/EXZINTER against non-existing key" {
         r del zseta
         assert_equal {} [r exzunion 1 zseta]
+        assert_equal {} [r exzinter 1 zseta]
     }
 
     test "EXZUNIONSTORE with empty set" {
@@ -1254,11 +1255,12 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzrange zsetc 0 -1 withscores
     } {a 1#2 b 2#3}
 
-    test "EXZUNION with empty set" {
+    test "EXZUNION/EXZINTER with empty set" {
         r del zseta zsetb
         r exzadd zseta 1#2 a
         r exzadd zseta 2#3 b
         assert_equal {a 1#2 b 2#3} [r exzunion 2 zseta zsetb withscores]
+        assert_equal {} [r exzinter 2 zseta zsetb withscores]
     }
 
     test "EXZUNIONSTORE basics" {
@@ -1274,7 +1276,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal {a 1#2 d 3#4 b 3#5 c 5#7} [r exzrange zsetc 0 -1 withscores]
     }
 
-    test "EXZUNION with integer members" {
+    test "EXZUNION/EXZINTER with integer members" {
         r del zsetd zsetf
         r exzadd zsetd 1#1 1
         r exzadd zsetd 2#2 2
@@ -1284,6 +1286,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzadd zsetf 4#4 4
 
         assert_equal {1 2#2 2 2#2 4 4#4 3 6#6} [r exzunion 2 zsetd zsetf withscores]
+        assert_equal {1 2#2 3 6#6} [r exzinter 2 zsetd zsetf withscores]
     }
 
     test "EXZUNIONSTORE with weights" {
@@ -1291,8 +1294,9 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal {a 2#4 b 7#12 d 9#12 c 12#17} [r exzrange zsetc 0 -1 withscores]
     }
 
-    test "EXZUNION with weights" {
+    test "EXZUNION/EXZINTER with weights" {
         assert_equal {a 2#4 b 7#12 d 9#12 c 12#17} [r exzunion 2 zseta zsetb weights 2 3 withscores]
+        assert_equal {b 7#12 c 12#17} [r exzinter 2 zseta zsetb weights 2 3 withscores]
     }
 
     test "EXZUNIONSTORE with AGGREGATE MIN" {
@@ -1300,8 +1304,9 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal {a 1#2 b 1#2 c 2#3 d 3#4} [r exzrange zsetc 0 -1 withscores]
     }
 
-    test "EXZUNION with AGGREGATE MIN" {
+    test "EXZUNION/EXZINTER with AGGREGATE MIN" {
         assert_equal {a 1#2 b 1#2 c 2#3 d 3#4} [r exzunion 2 zseta zsetb aggregate min withscores]
+        assert_equal {b 1#2 c 2#3} [r exzinter 2 zseta zsetb aggregate min withscores]
     }
 
     test "EXZUNIONSTORE with AGGREGATE MAX" {
@@ -1309,8 +1314,73 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal {a 1#2 b 2#3 c 3#4 d 3#4} [r exzrange zsetc 0 -1 withscores]
     }
 
-    test "EXZUNION with AGGREGATE MAX" {
+    test "EXZUNION/EXZINTER with AGGREGATE MAX" {
         assert_equal {a 1#2 b 2#3 c 3#4 d 3#4} [r exzunion 2 zseta zsetb aggregate max withscores]
+        assert_equal {b 2#3 c 3#4} [r exzinter 2 zseta zsetb aggregate max withscores]
+    }
+
+    test "EXZINTERSTORE basics" {
+        assert_equal 2 [r exzinterstore zsetc 2 zseta zsetb]
+        assert_equal {b 3#5 c 5#7} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZINTER basics" {
+        assert_equal {b 3#5 c 5#7} [r exzinter 2 zseta zsetb withscores]
+    }
+
+    test "EXZINTERSTORE with weights" {
+        assert_equal 2 [r exzinterstore zsetc 2 zseta zsetb weights 2 3]
+        assert_equal {b 7#12 c 12#17} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZINTER with weights" {
+        assert_equal {b 7#12 c 12#17} [r exzinter 2 zseta zsetb weights 2 3 withscores]
+    }
+
+    test "EXZINTERSTORE with AGGREGATE MIN" {
+        assert_equal 2 [r exzinterstore zsetc 2 zseta zsetb aggregate min]
+        assert_equal {b 1#2 c 2#3} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZINTERSTORE with AGGREGATE MAX" {
+        assert_equal 2 [r exzinterstore zsetc 2 zseta zsetb aggregate max]
+        assert_equal {b 2#3 c 3#4} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    foreach cmd {EXZUNIONSTORE EXZINTERSTORE} {
+        test "$cmd with +inf/-inf scores" {
+            r del zsetinf1 zsetinf2
+
+            r exzadd zsetinf1 +inf#1 key
+            r exzadd zsetinf2 +inf#2 key
+            r $cmd zsetinf3 2 zsetinf1 zsetinf2
+            assert_equal inf#3 [r exzscore zsetinf3 key]
+
+            r exzadd zsetinf1 -inf#1 key
+            r exzadd zsetinf2 +inf#2 key
+            r $cmd zsetinf3 2 zsetinf1 zsetinf2
+            assert_equal 0#3 [r exzscore zsetinf3 key]
+
+            r exzadd zsetinf1 +inf#1 key
+            r exzadd zsetinf2 -inf#2 key
+            r $cmd zsetinf3 2 zsetinf1 zsetinf2
+            assert_equal 0#3 [r exzscore zsetinf3 key]
+
+            r exzadd zsetinf1 -inf#1 key
+            r exzadd zsetinf2 -inf#2 key
+            r $cmd zsetinf3 2 zsetinf1 zsetinf2
+            assert_equal -inf#3 [r exzscore zsetinf3 key]
+        }
+
+        test "$cmd with NaN weights" {
+            r del zsetinf1 zsetinf2
+
+            r exzadd zsetinf1 1.0 key
+            r exzadd zsetinf2 1.0 key
+            assert_error "*weight*not*float*" {
+                r $cmd zsetinf3 2 zsetinf1 zsetinf2 weights nan nan
+            }
+        }
     }
 
     test {EXZUNIONSTORE regression, should not create NaN in scores} {
@@ -1341,8 +1411,9 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         }
     }
 
-    test "EXZUNIONSTORE error if using WITHSCORES " {
+    test "EXZUNIONSTORE/EXINTERSTORE error if using WITHSCORES " {
         assert_error "*ERR*syntax*" {r exzunionstore foo 2 zsetd zsetf withscores}
+        assert_error "*ERR*syntax*" {r exzinterstore foo 2 zsetd zsetf withscores}
     }
 }
 

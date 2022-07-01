@@ -157,6 +157,24 @@ inline static void exZunionInterAggregate(scoretype *target, scoretype *score, i
     }
 }
 
+/* Find value pointed to by val in the source pointer to by op. When found,
+ * return 1 and store its score in 'score' (deep copy). Return 0 otherwise. */
+int exZuidFind(zsetopsrc *op, zsetopval *val, scoretype *score) {
+    assert(score != NULL);
+
+    if (op->subject == NULL) {
+        return 0;
+    }
+
+    TairZsetObj *zobj = op->subject;
+    m_dictEntry *de;
+    if ((de = m_dictFind(zobj->dict, val->ele)) != NULL) {
+        mscoreAssign(score, dictGetVal(de));
+        return 1;
+    } 
+    return 0;
+}
+
 /* ========================= "tairzset" common functions =======================*/
 static int exZsetScore(TairZsetObj *obj, RedisModuleString *member, scoretype **score) {
     if (!obj || !member) {
@@ -1366,7 +1384,41 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
         m_dictReleaseIterator(di);
         m_dictRelease(accumulator);
     } else if (op == SET_OP_INTER) {
-        /* TODO */
+        /* Skip everything if the smallest input is empty. */
+        if (exZuidLength(&src[0]) > 0) {
+            /* Precondition: as src[0] is non-empty and the inputs are ordered
+             * by size, all src[i > 0] are non-empty too. */
+            exZuidInitIterator(&src[0]);
+            scoretype *value = mnewScore(scorenum);    /* Temporary value for computation */
+            while (exZuidNext(&src[0], &zval)) {
+                /* Initialize value */
+                score = mnewScore(scorenum);    /* Store in the zset */   
+                mscoreMulWithWeight(score, zval.score, src[0].weight);
+                for (j = 1; j < setnum; j++) {
+                    /* It is not safe to access the tair zset we are
+                     * iterating, so explicitly check for equal object. */
+                    if (src[j].subject == src[0].subject) {
+                        mscoreMulWithWeight(value, zval.score, src[j].weight);
+                        exZunionInterAggregate(score, value, aggregate);
+                    } else if (exZuidFind(&src[j], &zval, value)) {
+                        mscoreMulWithWeight(value, value, src[j].weight);
+                        exZunionInterAggregate(score, value, aggregate);
+                    } else {
+                        break;
+                    }
+                }
+
+                /* Only continue when present in every input. */
+                if (j == setnum) {
+                    tmp = RedisModule_CreateStringFromString(NULL, zval.ele);
+                    znode = m_zslInsert(dstzobj->zsl, score, tmp);
+                    m_dictAdd(dstzobj->dict, tmp, znode->score);
+                } else {
+                    RedisModule_Free(score);
+                }
+            }
+            RedisModule_Free(value);
+        }
     } else if (op == SET_OP_DIFF) {
         /* TODO */
     }
@@ -1945,6 +1997,29 @@ int TairZsetTypeZunion_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **arg
     return REDISMODULE_OK;
 }
 
+/* EXZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] */
+int TairZsetTypeZinterstore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 4) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
+
+    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_INTER);
+    return REDISMODULE_OK;
+}
+
+/* EXZINTER numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES] */
+int TairZsetTypeZinter_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_INTER);
+    return REDISMODULE_OK;
+}
+
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
     REDISMODULE_NOT_USED(encver);
@@ -2108,6 +2183,8 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_WRCMD("exzremrangebyscore", TairZsetTypeZremrangebyscore_RedisCommand)
     CREATE_WRCMD("exzremrangebyrank", TairZsetTypeZremrangebyrank_RedisCommand)
     CREATE_WRCMD("exzremrangebylex", TairZsetTypeZremrangebylex_RedisCommand)
+    CREATE_WRCMD("exzunionstore", TairZsetTypeZunionstore_RedisCommand)
+    CREATE_WRCMD("exzinterstore", TairZsetTypeZinterstore_RedisCommand)
 
     /* read cmd */
     CREATE_ROCMD("exzscore", TairZsetTypeZscore_RedisCommand)
@@ -2127,8 +2204,8 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzmscore", TairZsetTypeZmscore_RedisCommand)
     CREATE_ROCMD("exzrandmember", TairZsetTypeZrandmember_RedisCommand)
     CREATE_ROCMD("exzscan", TairZsetTypeZscan_RedisCommand)
-    CREATE_ROCMD("exzunionstore", TairZsetTypeZunionstore_RedisCommand)
     CREATE_ROCMD("exzunion", TairZsetTypeZunion_RedisCommand)
+    CREATE_ROCMD("exzinter", TairZsetTypeZinter_RedisCommand)
 
     return REDISMODULE_OK;
 }
