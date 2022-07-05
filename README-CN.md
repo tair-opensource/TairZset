@@ -100,10 +100,6 @@ cmake ../ && make -j
 ## API
 [参考这里](CMDDOC.md)
 
-## Roadmap
-- [x] 支持多维排序   
-- [ ] 支持EXZUNIONSTORE、EXZUNION、EXZSCAN、EXZDIFF、EXZDIFFSTORE、EXZINTER、EXZINTERSTORE、EXZRANDMEMBER、EXZMSCORE  
-
 ## 适用redis版本
 redis 5.x 、redis 6.x
 
