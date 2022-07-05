@@ -97,11 +97,6 @@ then the tairzset_module.so library file will be generated in the lib directory
 ## API
 [Ref](CMDDOC.md)
 
-## Roadmap
-- [x] support multi scores
-- [ ] support EXZUNIONSTORE、EXZUNION、EXZSCAN、EXZDIFF、EXZDIFFSTORE、EXZINTER、EXZINTERSTORE、EXZRANDMEMBER、EXZMSCORE  
-
-
 ## Applicable redis version   
 redis 5.x 、redis 6.x
 
