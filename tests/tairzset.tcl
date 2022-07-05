@@ -1241,10 +1241,11 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal 0 [r exists dst_key]
     }
 
-    test "EXZUNION/EXZINTER against non-existing key" {
+    test "EXZUNION/EXZINTER/EXDIFF against non-existing key" {
         r del zseta
         assert_equal {} [r exzunion 1 zseta]
         assert_equal {} [r exzinter 1 zseta]
+        assert_equal {} [r exzdiff 1 zseta]
     }
 
     test "EXZUNIONSTORE with empty set" {
@@ -1255,12 +1256,13 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzrange zsetc 0 -1 withscores
     } {a 1#2 b 2#3}
 
-    test "EXZUNION/EXZINTER with empty set" {
+    test "EXZUNION/EXZINTER/EXZDIFF with empty set" {
         r del zseta zsetb
         r exzadd zseta 1#2 a
         r exzadd zseta 2#3 b
         assert_equal {a 1#2 b 2#3} [r exzunion 2 zseta zsetb withscores]
         assert_equal {} [r exzinter 2 zseta zsetb withscores]
+        assert_equal {a 1#2 b 2#3} [r exzdiff 2 zseta zsetb withscores]
     }
 
     test "EXZUNIONSTORE basics" {
@@ -1276,7 +1278,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal {a 1#2 d 3#4 b 3#5 c 5#7} [r exzrange zsetc 0 -1 withscores]
     }
 
-    test "EXZUNION/EXZINTER with integer members" {
+    test "EXZUNION/EXZINTER/EXZDIFF with integer members" {
         r del zsetd zsetf
         r exzadd zsetd 1#1 1
         r exzadd zsetd 2#2 2
@@ -1287,6 +1289,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
 
         assert_equal {1 2#2 2 2#2 4 4#4 3 6#6} [r exzunion 2 zsetd zsetf withscores]
         assert_equal {1 2#2 3 6#6} [r exzinter 2 zsetd zsetf withscores]
+        assert_equal {2 2#2} [r exzdiff 2 zsetd zsetf withscores]
     }
 
     test "EXZUNIONSTORE with weights" {
@@ -1411,9 +1414,75 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         }
     }
 
-    test "EXZUNIONSTORE/EXINTERSTORE error if using WITHSCORES " {
+    test "EXZDIFFSTORE basics" {
+        assert_equal 1 [r exzdiffstore zsetc 2 zseta zsetb]
+        assert_equal {a 1#2} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZDIFF basics" {
+        assert_equal {a 1#2} [r exzdiff 2 zseta zsetb withscores]
+    }
+
+    test "EXZDIFF subtracting set from itself" {
+        assert_equal 0 [r exzdiffstore zsetc 2 zseta zseta]
+        assert_equal {} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZDIFF algorithm 1" {
+        r del zseta zsetb zsetc
+        r exzadd zseta 1#2 a
+        r exzadd zseta 2#3 b
+        r exzadd zseta 3#4 c
+        r exzadd zsetb 1#3 b
+        r exzadd zsetb 2#4 c
+        r exzadd zsetb 3#5 d
+        assert_equal 1 [r exzdiffstore zsetc 2 zseta zsetb]
+        assert_equal {a 1#2} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "ZDIFF algorithm 2" {
+        r del zseta zsetb zsetc zsetd zsete
+        r exzadd zseta 1#2 a
+        r exzadd zseta 2#3 b
+        r exzadd zseta 3#4 c
+        r exzadd zseta 5#6 e
+        r exzadd zsetb 1#1 b
+        r exzadd zsetc 1#1 c
+        r exzadd zsetd 1#1 d
+        assert_equal 2 [r exzdiffstore zsete 4 zseta zsetb zsetc zsetd]
+        assert_equal {a 1#2 e 5#6} [r exzrange zsete 0 -1 withscores]
+    }
+
+    test "EXZDIFF fuzzing" {
+        for {set j 0} {$j < 100} {incr j} {
+            unset -nocomplain s
+            array set s {}
+            set args {}
+            set num_sets [expr {[randomInt 10]+1}]
+            for {set i 0} {$i < $num_sets} {incr i} {
+                set num_elements [randomInt 100]
+                r del zset_$i
+                lappend args zset_$i
+                while {$num_elements} {
+                    set ele [randomValue]
+                    r exzadd zset_$i [randomInt 100] $ele
+                    if {$i == 0} {
+                        set s($ele) x
+                    } else {
+                        unset -nocomplain s($ele)
+                    }
+                    incr num_elements -1
+                }
+            }
+            set result [lsort [r exzdiff [llength $args] {*}$args]]
+            assert_equal $result [lsort [array names s]]
+        }
+    }
+
+    test "EXZUNIONSTORE/EXINTERSTORE/EXZDIFFSTORE error if using WITHSCORES " {
         assert_error "*ERR*syntax*" {r exzunionstore foo 2 zsetd zsetf withscores}
         assert_error "*ERR*syntax*" {r exzinterstore foo 2 zsetd zsetf withscores}
+        assert_error "*ERR*syntax*" {r exzdiffstore foo 2 zsetd zsetf withscores}
     }
 }
 
