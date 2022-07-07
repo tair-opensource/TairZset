@@ -1241,10 +1241,12 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal 0 [r exists dst_key]
     }
 
-    test "EXZUNION/EXZINTER/EXDIFF against non-existing key" {
+    test "EXZUNION/EXZINTER/EXZINTERCARD/EXDIFF against non-existing key" {
         r del zseta
         assert_equal {} [r exzunion 1 zseta]
         assert_equal {} [r exzinter 1 zseta]
+        assert_equal 0 [r exzintercard 1 zseta]
+        assert_equal 0 [r exzintercard 1 zseta limit 0]
         assert_equal {} [r exzdiff 1 zseta]
     }
 
@@ -1256,12 +1258,14 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzrange zsetc 0 -1 withscores
     } {a 1#2 b 2#3}
 
-    test "EXZUNION/EXZINTER/EXZDIFF with empty set" {
+    test "EXZUNION/EXZINTER/EXZINTERCARD/EXZDIFF with empty set" {
         r del zseta zsetb
         r exzadd zseta 1#2 a
         r exzadd zseta 2#3 b
         assert_equal {a 1#2 b 2#3} [r exzunion 2 zseta zsetb withscores]
         assert_equal {} [r exzinter 2 zseta zsetb withscores]
+        assert_equal 0 [r exzintercard 2 zseta zsetb{t}]
+        assert_equal 0 [r exzintercard 2 zseta zsetb limit 0]
         assert_equal {a 1#2 b 2#3} [r exzdiff 2 zseta zsetb withscores]
     }
 
@@ -1278,7 +1282,7 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal {a 1#2 d 3#4 b 3#5 c 5#7} [r exzrange zsetc 0 -1 withscores]
     }
 
-    test "EXZUNION/EXZINTER/EXZDIFF with integer members" {
+    test "EXZUNION/EXZINTER/EXZINTERCARD/EXZDIFF with integer members" {
         r del zsetd zsetf
         r exzadd zsetd 1#1 1
         r exzadd zsetd 2#2 2
@@ -1289,6 +1293,8 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
 
         assert_equal {1 2#2 2 2#2 4 4#4 3 6#6} [r exzunion 2 zsetd zsetf withscores]
         assert_equal {1 2#2 3 6#6} [r exzinter 2 zsetd zsetf withscores]
+        assert_equal 2 [r exzintercard 2 zsetd zsetf]
+        assert_equal 2 [r exzintercard 2 zsetd zsetf limit 0]
         assert_equal {2 2#2} [r exzdiff 2 zsetd zsetf withscores]
     }
 
@@ -1348,6 +1354,22 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
     test "EXZINTERSTORE with AGGREGATE MAX" {
         assert_equal 2 [r exzinterstore zsetc 2 zseta zsetb aggregate max]
         assert_equal {b 2#3 c 3#4} [r exzrange zsetc 0 -1 withscores]
+    }
+
+    test "EXZINTERCARD with illegal arguments" {
+        assert_error "ERR syntax error*" {r exzintercard 1 zseta zseta}
+        assert_error "ERR syntax error*" {r exzintercard 1 zseta bar_arg}
+        assert_error "ERR syntax error*" {r exzintercard 1 zseta LIMIT}
+
+        assert_error "ERR LIMIT*" {r exzintercard 1 myset LIMIT -1}
+        assert_error "ERR LIMIT*" {r exzintercard 1 myset LIMIT a}
+    }
+
+    test "ZINTERCARD basics" {
+        assert_equal 2 [r exzintercard 2 zseta zsetb]
+        assert_equal 2 [r exzintercard 2 zseta zsetb limit 0]
+        assert_equal 1 [r exzintercard 2 zseta zsetb limit 1]
+        assert_equal 2 [r exzintercard 2 zseta zsetb limit 10]
     }
 
     foreach cmd {EXZUNIONSTORE EXZINTERSTORE} {
@@ -1483,6 +1505,16 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_error "*ERR*syntax*" {r exzunionstore foo 2 zsetd zsetf withscores}
         assert_error "*ERR*syntax*" {r exzinterstore foo 2 zsetd zsetf withscores}
         assert_error "*ERR*syntax*" {r exzdiffstore foo 2 zsetd zsetf withscores}
+    }
+
+    test "exZunionInterDiffGenericCommand at least 1 input key" {
+        assert_error {*ERR*at least 1 input key*} {r exzunion 0 key}
+        assert_error {*ERR*at least 1 input key*} {r exzunionstore dst_key 0 key}
+        assert_error {*ERR*at least 1 input key*} {r exzinter 0 key}
+        assert_error {*ERR*at least 1 input key*} {r exzinterstore dst_key 0 key}
+        assert_error {*ERR*at least 1 input key*} {r exzdiff 0 key}
+        assert_error {*ERR*at least 1 input key*} {r exzdiffstore dst_key 0 key}
+        assert_error {*ERR*at least 1 input key*} {r exzintercard 0 key}
     }
 }
 
