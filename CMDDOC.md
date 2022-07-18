@@ -378,6 +378,22 @@ For a description of the WEIGHTS and AGGREGATE options, see EXZUNIONSTORE.
 
 Array reply: the result of intersection (optionally with their scores, in case the WITHSCORES option is given).
 
+### EXZINTERCARD
+
+> EXZINTERCARD numkeys key [key ...] [LIMIT limit]
+> time complexity: O(N*K) worst case with N being the smallest input sorted set, K being the number of input sorted sets.
+
+#### Command Descriptions:
+
+This command is similar to EXZINTER, but instead of returning the result set, it returns just the cardinality of the result.
+
+Keys that do not exist are considered to be empty sets. With one of the keys being an empty set, the resulting set is also empty (since set intersection with an empty set always results in an empty set).
+
+By default, the command calculates the cardinality of the intersection of all given sets. When provided with the optional LIMIT argument (which defaults to 0 and means unlimited), if the intersection cardinality reaches limit partway through the computation, the algorithm will exit and yield limit as the cardinality. Such implementation ensures a significant speedup for queries where the limit is lower than the actual intersection cardinality.
+
+#### Return value
+
+Integer reply: the number of elements in the resulting intersection.
 
 ### EXZDIFFSTORE
 

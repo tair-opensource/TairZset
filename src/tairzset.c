@@ -1358,14 +1358,17 @@ static void exZdiff(zsetopsrc *src, long setnum, TairZsetObj *dstzset) {
 }
 
 /* The exZunionInterDiffGenericCommand() function is called in order to implement the
- * following commands: EXZUNION, EXZINTER, EXZDIFF, EXZUNIONSTORE, EXZINTERSTORE, EXZDIFFSTORE.
+ * following commands: EXZUNION, EXZINTER, EXZDIFF, EXZUNIONSTORE, EXZINTERSTORE, EXZDIFFSTORE, 
+ * EXZINTERCARD.
  *
  * 'numkeysIndex' parameter position of key number. for EXZUNION/EXZINTER/EXZDIFF command,
  * this value is 1, for EXZUNIONSTORE/EXZINTERSTORE/EXZDIFFSTORE command, this value is 2.
  *
  * 'op' SET_OP_INTER, SET_OP_UNION or SET_OP_DIFF.
+ * 
+ * 'cardinality_only' is currently only applicable when 'op' is SET_OP_INTER.
  */
-void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RedisModuleKey *dstKey, int numkeysIndex, int op) {
+void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RedisModuleKey *dstKey, int numkeysIndex, int op, int cardinality_only) {
     int i, j;
     long long setnum;
     int aggregate = AGGR_SUM;
@@ -1377,6 +1380,8 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     TairZsetObj *dstzobj;
     m_zskiplistNode *znode;
     int withscores = 0;
+    unsigned long cardinality = 0;
+    long long limit = 0; /* Stop searching after reaching the limit. 0 means unlimited. */
 
     if (RedisModule_StringToLongLong(argv[numkeysIndex], &setnum) != REDISMODULE_OK) {
         RedisModule_ReplyWithError(ctx, "ERR value is not an integer or out of range");
@@ -1425,7 +1430,7 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
         int remaining = argc - j;
         while (remaining) {
             /* OP_DIFF does not have optional extra arguments */
-            if (op != SET_OP_DIFF &&
+            if (op != SET_OP_DIFF && !cardinality_only &&
                 remaining >= (setnum + 1) &&
                 !mstringcasecmp(argv[j], "WEIGHTS")) {
                 j++;
@@ -1437,7 +1442,7 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
                         return;
                     }
                 }
-            } else if (op != SET_OP_DIFF &&
+            } else if (op != SET_OP_DIFF && !cardinality_only &&
                         remaining >= 2 &&
                         !mstringcasecmp(argv[j], "AGGREGATE")) {
                 j++;
@@ -1455,13 +1460,24 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
                 }
                 j++;
                 remaining--;
-            } else if (remaining >= 1 &&
-                        !dstKey &&
+            } else if (remaining >= 1 && 
+                        !dstKey && !cardinality_only &&
                         !mstringcasecmp(argv[j], "WITHSCORES")) {
 
                 j++;
                 remaining--;
                 withscores = 1;
+            } else if (cardinality_only && remaining >= 2 &&
+                        !mstringcasecmp(argv[j], "LIMIT")) {
+                j++;
+                remaining--;
+                if (RedisModule_StringToLongLong(argv[j], &limit) != REDISMODULE_OK || limit < 0) {
+                    RedisModule_Free(src);
+                    RedisModule_ReplyWithError(ctx, "ERR LIMIT can't be negative");
+                    return;
+                }
+                j++;
+                remaining--;
             } else {
                 RedisModule_Free(src);
                 RedisModule_ReplyWithError(ctx, "ERR syntax error");
@@ -1562,7 +1578,12 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
                 }
 
                 /* Only continue when present in every input. */
-                if (j == setnum) {
+                if (j == setnum && cardinality_only) {
+                    cardinality++;
+                    if (limit && cardinality >= (unsigned long)limit) {
+                        break;
+                    }
+                } else if (j == setnum) {
                     tmp = RedisModule_CreateStringFromString(NULL, zval.ele);
                     znode = m_zslInsert(dstzobj->zsl, score, tmp);
                     m_dictAdd(dstzobj->dict, tmp, znode->score);
@@ -1586,6 +1607,8 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
         }
         RedisModule_ReplyWithLongLong(ctx, length);
         RedisModule_ReplicateVerbatim(ctx);
+    } else if (cardinality_only) {
+        RedisModule_ReplyWithLongLong(ctx, cardinality);
     } else {
         unsigned long length = dstzobj->zsl->length;
         m_zskiplist *zsl = dstzobj->zsl;
@@ -2136,7 +2159,7 @@ int TairZsetTypeZunionstore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString 
 
     RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
 
-    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_UNION);
+    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_UNION, 0);
     return REDISMODULE_OK;
 }
 
@@ -2146,7 +2169,7 @@ int TairZsetTypeZunion_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **arg
     if (argc < 3) {
         return RedisModule_WrongArity(ctx);
     }
-    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_UNION);
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_UNION, 0);
     return REDISMODULE_OK;
 }
 
@@ -2159,7 +2182,7 @@ int TairZsetTypeZinterstore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString 
 
     RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
 
-    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_INTER);
+    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_INTER, 0);
     return REDISMODULE_OK;
 }
 
@@ -2169,7 +2192,7 @@ int TairZsetTypeZinter_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **arg
     if (argc < 3) {
         return RedisModule_WrongArity(ctx);
     }
-    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_INTER);
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_INTER, 0);
     return REDISMODULE_OK;
 }
 
@@ -2182,7 +2205,7 @@ int TairZsetTypeZdiffstore_RedisCommand(RedisModuleCtx *ctx, RedisModuleString *
 
     RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ | REDISMODULE_WRITE);
 
-    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_DIFF);
+    exZunionInterDiffGenericCommand(ctx, argv, argc, key, 2, SET_OP_DIFF, 0);
     return REDISMODULE_OK;
 }
 
@@ -2192,7 +2215,17 @@ int TairZsetTypeZdiff_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     if (argc < 3) {
         return RedisModule_WrongArity(ctx);
     }
-    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_DIFF);
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_DIFF, 0);
+    return REDISMODULE_OK;
+}
+
+/* EXZINTERCARD numkeys key [key ...] [LIMIT limit] */
+int TairZsetTypeZintercard_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+    exZunionInterDiffGenericCommand(ctx, argv, argc, NULL, 1, SET_OP_INTER, 1);
     return REDISMODULE_OK;
 }
 
@@ -2384,6 +2417,7 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_ROCMD("exzunion", TairZsetTypeZunion_RedisCommand)
     CREATE_ROCMD("exzinter", TairZsetTypeZinter_RedisCommand)
     CREATE_ROCMD("exzdiff", TairZsetTypeZdiff_RedisCommand)
+    CREATE_ROCMD("exzintercard", TairZsetTypeZintercard_RedisCommand)
 
     return REDISMODULE_OK;
 }
