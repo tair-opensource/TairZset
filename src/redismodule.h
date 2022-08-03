@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define REDISMODULE_EXPERIMENTAL_API
+
 /* ---------------- Defines common between core and modules --------------- */
 
 /* Error status return values. */

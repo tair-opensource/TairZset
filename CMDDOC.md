@@ -455,3 +455,45 @@ When left unspecified, the default value for count is 1. Specifying a count valu
 #### Return value
 
 Array reply: list of popped elements and scores.
+
+### EXBZPOPMIN
+
+> EXBZPOPMIN key [key ...] timeout
+> time complexity: O(log(N)) with N being the number of elements in the sorted set.
+> Available for: Redis 6.0.0+
+
+`EXBZPOPMIN` is the blocking variant of the sorted set `EXZPOPMIN` primitive.
+
+It is the blocking version because it blocks the connection when there are no members to pop from any of the given sorted sets. A member with the lowest score is popped from first sorted set that is non-empty, with the given keys being checked in the order that they are given.
+
+The `timeout` argument is interpreted as a double value specifying the maximum number of seconds to block. A timeout of zero can be used to block indefinitely.
+
+See the [BLPOP documentation](https://redis.io/commands/blpop/) for the exact semantics, since `EXBZPOPMIN` is identical to `BLPOP` with the only difference being the data structure being popped from.
+
+#### Return value
+
+Array reply: specifically:
+
+- A nil multi-bulk when no element could be popped and the timeout expired.
+- A three-element multi-bulk with the first element being the name of the key where a member was popped, the second element is the popped member itself, and the third element is the score of the popped element.
+
+### EXBZPOPMAX
+
+> EXBZPOPMAX key [key ...] timeout
+> time complexity: O(log(N)) with N being the number of elements in the sorted set.
+> Available for: Redis 6.0.0+
+
+`EXBZPOPMAX` is the blocking variant of the sorted set `EXZPOPMAX` primitive.
+
+It is the blocking version because it blocks the connection when there are no members to pop from any of the given sorted sets. A member with the lowest score is popped from first sorted set that is non-empty, with the given keys being checked in the order that they are given.
+
+The `timeout` argument is interpreted as a double value specifying the maximum number of seconds to block. A timeout of zero can be used to block indefinitely.
+
+See the [EXBZPOPMIN documentation](###EXBZPOPMIN) for the exact semantics, since `EXBZPOPMAX` is identical to `EXBZPOPMIN` with the only difference being the data structure being popped from.
+
+#### Return value
+
+Array reply: specifically:
+
+- A nil multi-bulk when no element could be popped and the timeout expired.
+- A three-element multi-bulk with the first element being the name of the key where a member was popped, the second element is the popped member itself, and the third element is the score of the popped element.
