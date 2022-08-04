@@ -74,6 +74,9 @@ static unsigned long exZsetLength(const TairZsetObj *zobj) {
 #define AGGR_SUM 1
 #define AGGR_MIN 2
 #define AGGR_MAX 3
+/* Pop commands related */
+#define POP_MIN 0
+#define POP_MAX 1
 
 typedef struct {
     TairZsetObj *subject;
@@ -1635,6 +1638,95 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     RedisModule_Free(src);
 }
 
+/* This command implements the generic exzpop operation, used by:
+ * EXZPOPMIN, EXZPOPMAX.
+ *
+ * 'count' is the number of elements requested to pop, or -1 for plain single pop.
+ * */
+void exGenericZpopCommand(RedisModuleCtx *ctx, RedisModuleKey *key, int where, long count) {
+    TairZsetObj *tair_zset_obj = NULL;
+    RedisModuleString *ele;
+    scoretype *score;
+
+    tair_zset_obj = RedisModule_ModuleTypeGetValue(key);
+
+    /* No candidate for exzpopping, return empty. */
+    if (!tair_zset_obj) {
+        RedisModule_ReplyWithArray(ctx, 0);
+        return;
+    }
+
+    if (count == 0) {
+        /* EXZPOPMIN/EXZPOPMAX with count 0. */
+        RedisModule_ReplyWithArray(ctx, 0);
+        return;
+    }
+
+    /* When count is -1, we need to correct it to 1 for plain single pop. */
+    if (count == -1) count = 1;
+
+    long llen = exZsetLength(tair_zset_obj);
+    long rangelen = (count > llen) ? llen : count;
+    RedisModule_ReplyWithArray(ctx, rangelen * 2);
+
+    /* Remove the element. */
+    do {
+        m_zskiplist *zsl = tair_zset_obj->zsl;
+        m_zskiplistNode *zln;
+
+        /* Get the first or last element in the sorted set. */
+        zln = (where == POP_MAX ? zsl->tail : zsl->header->level[0].forward);
+
+        ele = zln->ele;
+        score = zln->score;
+
+        RedisModule_ReplyWithString(ctx, ele);
+        sds score_str = mscore2String(score);
+        RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+        m_sdsfree(score_str);
+
+        exZsetDel(tair_zset_obj, ele);
+    } while (--rangelen);
+
+    /* Remove the key, if indeed needed. */
+    if (exZsetLength(tair_zset_obj) == 0) {
+        RedisModule_DeleteKey(key);
+    }
+
+    RedisModule_ReplicateVerbatim(ctx);
+}
+
+/* EXZPOPMIN/EXZPOPMAX key [<count>] */
+int exZpopMinMaxGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int where) {
+    RedisModule_AutoMemory(ctx);
+
+    if (argc < 2 || argc > 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    long long count = -1;
+    if (argc == 3 && (RedisModule_StringToLongLong(argv[2], &count) != REDISMODULE_OK || count < 0)) {
+        RedisModule_ReplyWithError(ctx, "ERR value is not an integer or out of range");
+        return REDISMODULE_OK;
+    }
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_WRITE);
+    int type = RedisModule_KeyType(key);
+    if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+        RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+        return REDISMODULE_OK;
+    }
+
+    if (type == REDISMODULE_KEYTYPE_EMPTY) {
+        RedisModule_ReplyWithArray(ctx, 0);
+        return REDISMODULE_OK;
+    }
+
+    exGenericZpopCommand(ctx, key, where, count); 
+
+    return REDISMODULE_OK;
+}
+
 /* ========================= "tairzset" type commands =======================*/
 
 /* EXZADD key [NX|XX] [CH] [INCR] score member [score member ...] */
@@ -2229,6 +2321,17 @@ int TairZsetTypeZintercard_RedisCommand(RedisModuleCtx *ctx, RedisModuleString *
     return REDISMODULE_OK;
 }
 
+/* EXZPOPMIN key [<count>] */
+int TairZsetTypeZpopmin_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return exZpopMinMaxGenericCommand(ctx, argv, argc, POP_MIN);
+}
+
+/* EXZPOPMAX key [<count>] */
+int TairZsetTypeZpopmax_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return exZpopMinMaxGenericCommand(ctx, argv, argc, POP_MAX);
+}
+
+
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
     REDISMODULE_NOT_USED(encver);
@@ -2395,6 +2498,8 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_WRCMD("exzunionstore", TairZsetTypeZunionstore_RedisCommand)
     CREATE_WRCMD("exzinterstore", TairZsetTypeZinterstore_RedisCommand)
     CREATE_WRCMD("exzdiffstore", TairZsetTypeZdiffstore_RedisCommand)
+    CREATE_WRCMD("exzpopmin", TairZsetTypeZpopmin_RedisCommand)
+    CREATE_WRCMD("exzpopmax", TairZsetTypeZpopmax_RedisCommand)
 
     /* read cmd */
     CREATE_ROCMD("exzscore", TairZsetTypeZscore_RedisCommand)

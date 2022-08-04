@@ -1516,6 +1516,30 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_error {*ERR*at least 1 input key*} {r exzdiffstore dst_key 0 key}
         assert_error {*ERR*at least 1 input key*} {r exzintercard 0 key}
     }
+
+    test "Basic EXZPOP with a single key" {
+        r del zset
+        assert_equal {} [r exzpopmin zset]
+        create_tairzset zset {-1#1 a 2#1 b 2#2 c 3#3 d 4#4 e}
+        assert_equal {a -1#1} [r exzpopmin zset]
+        assert_equal {b 2#1} [r exzpopmin zset]
+        assert_equal {e 4#4} [r exzpopmax zset]
+        assert_equal {d 3#3} [r exzpopmax zset]
+        assert_equal {c 2#2} [r exzpopmin zset]
+        assert_equal 0 [r exists zset]
+        r set foo bar
+        assert_error "*WRONGTYPE*" {r exzpopmin foo}
+    }
+
+    test "EXZPOP with count" {
+        r del z1 z2 z3 foo
+        r set foo bar
+        assert_equal {} [r exzpopmin z1 2]
+        assert_error "*WRONGTYPE*" {r exzpopmin foo 2}
+        create_tairzset z1 {0#0 a 1#1 b 2#2 c 3#3 d}
+        assert_equal {a 0#0 b 1#1} [r exzpopmin z1 2]
+        assert_equal {d 3#3 c 2#2} [r exzpopmax z1 2]
+    }
 }
 
 start_server {tags {"repl test"} overrides {bind 0.0.0.0}} {

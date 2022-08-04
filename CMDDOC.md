@@ -424,3 +424,34 @@ This command is similar to EXZDIFFSTORE, but instead of storing the resulting so
 #### Return value
 
 Array reply: the result of the difference (optionally with their scores, in case the WITHSCORES option is given).
+
+
+### EXZPOPMAX
+
+> EXZPOPMAX key [count]
+> time complexity: O(log(N)*M) with N being the number of elements in the sorted set, and M being the number of elements popped.
+
+#### Command Descriptions:
+
+Removes and returns up to count members with the highest scores in the sorted set stored at key.
+
+When left unspecified, the default value for count is 1. Specifying a count value that is higher than the sorted set's cardinality will not produce an error. When returning multiple elements, the one with the highest score will be the first, followed by the elements with lower scores.
+
+#### Return value
+
+Array reply: list of popped elements and scores.
+
+### EXZPOPMIN
+
+> EXZPOPMIN key [count]
+> time complexity: O(log(N)*M) with N being the number of elements in the sorted set, and M being the number of elements popped.
+
+#### Command Descriptions:
+
+Removes and returns up to count members with the lowest scores in the sorted set stored at key.
+
+When left unspecified, the default value for count is 1. Specifying a count value that is higher than the sorted set's cardinality will not produce an error. When returning multiple elements, the one with the lowest score will be the first, followed by the elements with greater scores.
+
+#### Return value
+
+Array reply: list of popped elements and scores.
