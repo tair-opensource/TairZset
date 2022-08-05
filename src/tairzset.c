@@ -1699,7 +1699,16 @@ void exGenericZpopCommand(RedisModuleCtx *ctx, RedisModuleKey *key, int where, R
         RedisModule_DeleteKey(key);
     }
 
-    RedisModule_ReplicateVerbatim(ctx);
+    if (emitkey) {
+        // Only replicate non-block command.
+        if (where == POP_MIN) {
+            RedisModule_Replicate(ctx, "EXBZPOPMIN", "s", emitkey);
+        } else {
+            RedisModule_Replicate(ctx, "EXBZPOPMAX", "s", emitkey);
+        }
+    } else {
+        RedisModule_ReplicateVerbatim(ctx);
+    }
 }
 
 /* EXZPOPMIN/EXZPOPMAX key [<count>] */
@@ -1751,6 +1760,8 @@ int exBzpopReplyCallback(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
     ExBzpopInfo *info = RedisModule_GetBlockedClientPrivateData(ctx);
 
     exGenericZpopCommand(ctx, key, info->where, key_str, 1);
+
+    RedisModule_CloseKey(key);
     return REDISMODULE_OK;
 }
 
@@ -1818,7 +1829,7 @@ int exBzpopMinMaxGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, i
         exBzpopTimeoutCallback, 
         freePrivdata, 
         timeout, 
-        argv + 1, 
+        &argv[1], 
         argc - 1, 
         info);
 
