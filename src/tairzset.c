@@ -1747,6 +1747,8 @@ typedef struct exBzpopInfo {
 } ExBzpopInfo;
 
 int exBzpopReplyCallback(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    
     RedisModuleString *key_str = RedisModule_GetBlockedClientReadyKey(ctx);
     RedisModuleKey *key = RedisModule_OpenKey(ctx, key_str, REDISMODULE_WRITE);
     int type = RedisModule_KeyType(key);
@@ -1761,7 +1763,6 @@ int exBzpopReplyCallback(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 
     exGenericZpopCommand(ctx, key, info->where, key_str, 1);
 
-    RedisModule_CloseKey(key);
     return REDISMODULE_OK;
 }
 
