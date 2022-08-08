@@ -27,7 +27,6 @@ jobs:
         work_path=$(pwd)
         module_path=$work_path/lib
         sed -e "s#your_path#$module_path#g" tests/tairzset.tcl > redis/tests/unit/type/tairzset.tcl
-        sed -i 's#unit/type/string#unit/type/tairzset#g' redis/tests/test_helper.tcl
         cd redis
         ./runtest --stack-logging --single unit/type/tairzset
 
@@ -54,9 +53,7 @@ jobs:
         work_path=$(pwd)
         module_path=$work_path/lib
         sed -e "s#your_path#$module_path#g" tests/tairzset.tcl > redis/tests/unit/type/tairzset.tcl
-        sed -i 's#unit/type/string#unit/type/tairzset#g' redis/tests/test_helper.tcl
         sed -e "s#your_path#$module_path#g" tests/tairzset-6.0.0.tcl > redis/tests/unit/type/tairzset-6.0.0.tcl 
-        sed -i 's#unit/type/string#unit/type/tairzset-6.0.0#g' redis/tests/test_helper.tcl
         cd redis
         ./runtest --stack-logging --single unit/type/tairzset
         ./runtest --stack-logging --single unit/type/tairzset-6.0.0
@@ -84,9 +81,7 @@ jobs:
         work_path=$(pwd)
         module_path=$work_path/lib
         sed -e "s#your_path#$module_path#g" tests/tairzset.tcl > redis/tests/unit/type/tairzset.tcl
-        sed -i 's#unit/type/string#unit/type/tairzset#g' redis/tests/test_helper.tcl
         sed -e "s#your_path#$module_path#g" tests/tairzset-6.0.0.tcl > redis/tests/unit/type/tairzset-6.0.0.tcl 
-        sed -i 's#unit/type/string#unit/type/tairzset-6.0.0#g' redis/tests/test_helper.tcl
         cd redis
         ./runtest --stack-logging --single unit/type/tairzset
         ./runtest --stack-logging --single unit/type/tairzset-6.0.0
