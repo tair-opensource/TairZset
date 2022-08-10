@@ -712,6 +712,10 @@ static void exZaddGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
     }
 
     RedisModule_ReplicateVerbatim(ctx);
+    if (RMAPI_FUNC_SUPPORTED(RedisModule_SignalKeyAsReady)) {
+        // For EXBZPOP[MIN|MAX]
+        RedisModule_SignalKeyAsReady(ctx, argv[1]);
+    }
 
 reply_to_client:
     if (incr) { 
@@ -1639,11 +1643,14 @@ void exZunionInterDiffGenericCommand(RedisModuleCtx *ctx, RedisModuleString **ar
 }
 
 /* This command implements the generic exzpop operation, used by:
- * EXZPOPMIN, EXZPOPMAX.
+ * EXZPOPMIN, EXZPOPMAX, EXBZPOPMIN, EXBZPOPMAX.
  *
+ * If 'emitkey' is not null also the key name is emitted, useful for the blocking
+ * behavior of EXBZPOP[MIN|MAX], since we can block into multiple keys.
+ * 
  * 'count' is the number of elements requested to pop, or -1 for plain single pop.
  * */
-void exGenericZpopCommand(RedisModuleCtx *ctx, RedisModuleKey *key, int where, long count) {
+void exGenericZpopCommand(RedisModuleCtx *ctx, RedisModuleKey *key, int where, RedisModuleString *emitkey, long count) {
     TairZsetObj *tair_zset_obj = NULL;
     RedisModuleString *ele;
     scoretype *score;
@@ -1667,13 +1674,14 @@ void exGenericZpopCommand(RedisModuleCtx *ctx, RedisModuleKey *key, int where, l
 
     long llen = exZsetLength(tair_zset_obj);
     long rangelen = (count > llen) ? llen : count;
-    RedisModule_ReplyWithArray(ctx, rangelen * 2);
-
+    RedisModule_ReplyWithArray(ctx, rangelen * 2 + (emitkey ? 1 : 0));
+    if (emitkey) {
+        RedisModule_ReplyWithString(ctx, emitkey);
+    }
     /* Remove the element. */
     do {
         m_zskiplist *zsl = tair_zset_obj->zsl;
-        m_zskiplistNode *zln;
-
+        m_zskiplistNode *zln;       
         /* Get the first or last element in the sorted set. */
         zln = (where == POP_MAX ? zsl->tail : zsl->header->level[0].forward);
 
@@ -1684,16 +1692,23 @@ void exGenericZpopCommand(RedisModuleCtx *ctx, RedisModuleKey *key, int where, l
         sds score_str = mscore2String(score);
         RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
         m_sdsfree(score_str);
-
         exZsetDel(tair_zset_obj, ele);
     } while (--rangelen);
-
     /* Remove the key, if indeed needed. */
     if (exZsetLength(tair_zset_obj) == 0) {
         RedisModule_DeleteKey(key);
     }
 
-    RedisModule_ReplicateVerbatim(ctx);
+    if (emitkey) {
+        // Only replicate non-block command.
+        if (where == POP_MIN) {
+            RedisModule_Replicate(ctx, "EXBZPOPMIN", "s", emitkey);
+        } else {
+            RedisModule_Replicate(ctx, "EXBZPOPMAX", "s", emitkey);
+        }
+    } else {
+        RedisModule_ReplicateVerbatim(ctx);
+    }
 }
 
 /* EXZPOPMIN/EXZPOPMAX key [<count>] */
@@ -1722,7 +1737,102 @@ int exZpopMinMaxGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, in
         return REDISMODULE_OK;
     }
 
-    exGenericZpopCommand(ctx, key, where, count); 
+    exGenericZpopCommand(ctx, key, where, NULL, count); 
+
+    return REDISMODULE_OK;
+}
+
+typedef struct exBzpopInfo {
+    int where;
+} ExBzpopInfo;
+
+int exBzpopReplyCallback(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    RedisModule_AutoMemory(ctx);
+    
+    RedisModuleString *key_str = RedisModule_GetBlockedClientReadyKey(ctx);
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, key_str, REDISMODULE_WRITE);
+    int type = RedisModule_KeyType(key);
+    if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+        return REDISMODULE_ERR;
+    }
+
+    if (type == REDISMODULE_KEYTYPE_EMPTY || key == NULL) {
+        return REDISMODULE_ERR;
+    }
+    ExBzpopInfo *info = RedisModule_GetBlockedClientPrivateData(ctx);
+
+    exGenericZpopCommand(ctx, key, info->where, key_str, 1);
+
+    return REDISMODULE_OK;
+}
+
+void freePrivdata(RedisModuleCtx *ctx,void *privdata) {
+    RedisModule_Free(privdata);
+}
+
+int exBzpopTimeoutCallback(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)  {
+    return RedisModule_ReplyWithNull(ctx);
+}
+
+/* EXBZPOPMIN / EXBZPOPMAX actual implementation. */
+int exBzpopMinMaxGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int where) {
+    RedisModule_AutoMemory(ctx);
+
+    if (argc < 3) {
+        return RedisModule_WrongArity(ctx);
+    }
+
+    double ftval;
+    long long timeout;
+    RedisModuleKey *key;
+    TairZsetObj *o;
+    int j;
+
+    if (RedisModule_StringToDouble(argv[argc - 1], &ftval) != REDISMODULE_OK) {
+        RedisModule_ReplyWithError(ctx, "ERR timeout is not an float or out of range");
+        return REDISMODULE_OK;
+    }
+
+    timeout = (long long) (ftval * 1000.0);
+
+    if (timeout < 0) {
+        RedisModule_ReplyWithError(ctx, "ERR timeout is negative");
+        return REDISMODULE_OK;
+    }
+
+    for (j = 1; j < argc - 1; j++) {
+        key = RedisModule_OpenKey(ctx, argv[j], REDISMODULE_WRITE);
+        int type = RedisModule_KeyType(key);
+
+        if (type == REDISMODULE_KEYTYPE_EMPTY || key == NULL) continue;
+
+        if (REDISMODULE_KEYTYPE_EMPTY != type && RedisModule_ModuleTypeGetType(key) != TairZsetType) {
+            RedisModule_ReplyWithError(ctx, REDISMODULE_ERRORMSG_WRONGTYPE);
+            return REDISMODULE_OK;
+        }
+
+        o = RedisModule_ModuleTypeGetValue(key);
+        if (o == NULL) continue;
+        long llen = exZsetLength(o);
+        if (llen == 0) continue;
+
+        exGenericZpopCommand(ctx, key, where, argv[j], 1);
+
+        return REDISMODULE_OK;
+    }
+
+    ExBzpopInfo *info = RedisModule_Alloc(sizeof(ExBzpopInfo));
+    info->where = where;
+
+    RedisModule_BlockClientOnKeys(
+        ctx, 
+        exBzpopReplyCallback, 
+        exBzpopTimeoutCallback, 
+        freePrivdata, 
+        timeout, 
+        &argv[1], 
+        argc - 1, 
+        info);
 
     return REDISMODULE_OK;
 }
@@ -2331,6 +2441,17 @@ int TairZsetTypeZpopmax_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     return exZpopMinMaxGenericCommand(ctx, argv, argc, POP_MAX);
 }
 
+// EXBZPOPMIN key [key ...] timeout
+int TairZsetTypeBzpopmin_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return exBzpopMinMaxGenericCommand(ctx, argv, argc, POP_MIN);
+}
+
+// EXBZPOPMAX key [key ...] timeout
+int TairZsetTypeBzpopmax_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return exBzpopMinMaxGenericCommand(ctx, argv, argc, POP_MAX);
+}
+
+
 
 /* ========================== "exstrtype" type methods =======================*/
 void *TairZsetTypeRdbLoad(RedisModuleIO *rdb, int encver) {
@@ -2500,6 +2621,12 @@ int Module_CreateCommands(RedisModuleCtx *ctx) {
     CREATE_WRCMD("exzdiffstore", TairZsetTypeZdiffstore_RedisCommand)
     CREATE_WRCMD("exzpopmin", TairZsetTypeZpopmin_RedisCommand)
     CREATE_WRCMD("exzpopmax", TairZsetTypeZpopmax_RedisCommand)
+
+    // Block pop command is only support for Redis 6.0.0+
+    if (RMAPI_FUNC_SUPPORTED(RedisModule_BlockClientOnKeys)) {
+        CREATE_WRCMD("exbzpopmin", TairZsetTypeBzpopmin_RedisCommand)
+        CREATE_WRCMD("exbzpopmax", TairZsetTypeBzpopmax_RedisCommand)
+    }
 
     /* read cmd */
     CREATE_ROCMD("exzscore", TairZsetTypeZscore_RedisCommand)

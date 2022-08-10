@@ -56,7 +56,7 @@ If member does not exist in the tairzset, or key does not exist, nil is returned
 Bulk string reply: the score of member (a double precision floating point number), represented as string.
 ### EXZRANGE
 #### Grammar and complexity：
-> EXZRANGE <key> <min> <max> [WITHSCORES]
+> EXZRANGE <key> <min> <max> [WITHSCORES]   
 > time complexity：O(log(N)+M) with N being the number of elements in the tairzset and M the number of elements returned.
 
 #### Command Description:
@@ -231,7 +231,7 @@ If member does not exist in the tairzset or key does not exist, Bulk string repl
 > time complexity：O(log(N)) with N being the number of elements in the tairzset.
 
 ### EXZMSCORE
-> EXZMSCORE key member [member ...]
+> EXZMSCORE key member [member ...]     
 > time complexity：O(N) where N is the number of members being requested.
 
 #### Command Description:
@@ -265,7 +265,7 @@ Note: the command has a complexity of just O(log(N)) because it uses elements ra
 Integer reply: the number of elements in the specified score range.
 
 ### EXZRANDMEMBER
-> EXZRANDMEMBER key [count [WITHSCORES]]
+> EXZRANDMEMBER key [count [WITHSCORES]]    
 > time complexity：O(N) where N is the number of elements returned.
 
 #### Command Description:
@@ -284,7 +284,7 @@ Bulk string reply: without the additional count argument, the command returns a 
 
 Array reply: when the additional count argument is passed, the command returns an array of elements, or an empty array when key does not exist. If the WITHSCORES modifier is used, the reply is a list elements and their scores from the sorted set.
 ### EXZSCAN
-> EXZSCAN key cursor [MATCH pattern] [COUNT count]
+> EXZSCAN key cursor [MATCH pattern] [COUNT count]  
 > time complexity: O(1) for every call. O(N) for a complete iteration, including enough command calls for the cursor to return back to 0. N is the number of elements inside the collection.
 
 #### Command Description:
@@ -305,7 +305,7 @@ A two elements multi-bulk reply, where the first element is a string representin
 
 ### EXZUNIONSTORE
 
-> EXZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]
+> EXZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]     
 > time complexity: O(N)+O(M log(M)) with N being the sum of the sizes of the input sorted sets, and M being the number of elements in the resulting sorted set.
 
 #### Command Description:
@@ -328,7 +328,7 @@ Integer reply: the number of elements in the resulting sorted set at destination
 
 ### EXZUNION
 
-> EXZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]
+> EXZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]     
 > time complexity: O(N)+O(M*log(M)) with N being the sum of the sizes of the input sorted sets, and M being the number of elements in the resulting sorted set.
 
 #### Command Description:
@@ -344,7 +344,7 @@ Array reply: the result of union (optionally with their scores, in case the WITH
 
 ### EXZINTERSTORE
 
-> EXZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]
+> EXZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX]     
 > time complexity: O(NK)+O(Mlog(M)) worst case with N being the smallest input sorted set, K being the number of input sorted sets and M being the number of elements in the resulting sorted set.
 
 #### Command Description:
@@ -365,7 +365,7 @@ Integer reply: the number of elements in the resulting sorted set at destination
 
 ### EXZINTER
 
-> EXZINTER numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES]
+> EXZINTER numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM | MIN | MAX] [WITHSCORES] 
 > time complexity: O(NK)+O(Mlog(M)) worst case with N being the smallest input sorted set, K being the number of input sorted sets and M being the number of elements in the resulting sorted set.
 
 #### Command Descriptions:
@@ -380,7 +380,7 @@ Array reply: the result of intersection (optionally with their scores, in case t
 
 ### EXZINTERCARD
 
-> EXZINTERCARD numkeys key [key ...] [LIMIT limit]
+> EXZINTERCARD numkeys key [key ...] [LIMIT limit]  
 > time complexity: O(N*K) worst case with N being the smallest input sorted set, K being the number of input sorted sets.
 
 #### Command Descriptions:
@@ -397,7 +397,7 @@ Integer reply: the number of elements in the resulting intersection.
 
 ### EXZDIFFSTORE
 
-> EXZDIFFSTORE destination numkeys key [key ...]
+> EXZDIFFSTORE destination numkeys key [key ...]    
 > time complexity: O(L + (N-K)log(N)) worst case where L is the total number of elements in all the sets, N is the size of the first set, and K is the size of the result set.
 
 #### Command Descriptions:
@@ -414,7 +414,7 @@ Integer reply: the number of elements in the resulting sorted set at destination
 
 ### EXZDIFF
 
-> EXZDIFF numkeys key [key ...] [WITHSCORES]
+> EXZDIFF numkeys key [key ...] [WITHSCORES]    
 > time complexity: O(L + (N-K)log(N)) worst case where L is the total number of elements in all the sets, N is the size of the first set, and K is the size of the result set.
 
 #### Command Descriptions:
@@ -428,7 +428,7 @@ Array reply: the result of the difference (optionally with their scores, in case
 
 ### EXZPOPMAX
 
-> EXZPOPMAX key [count]
+> EXZPOPMAX key [count]     
 > time complexity: O(log(N)*M) with N being the number of elements in the sorted set, and M being the number of elements popped.
 
 #### Command Descriptions:
@@ -443,7 +443,7 @@ Array reply: list of popped elements and scores.
 
 ### EXZPOPMIN
 
-> EXZPOPMIN key [count]
+> EXZPOPMIN key [count]     
 > time complexity: O(log(N)*M) with N being the number of elements in the sorted set, and M being the number of elements popped.
 
 #### Command Descriptions:
@@ -455,3 +455,45 @@ When left unspecified, the default value for count is 1. Specifying a count valu
 #### Return value
 
 Array reply: list of popped elements and scores.
+
+### EXBZPOPMIN
+
+> EXBZPOPMIN key [key ...] timeout      
+> time complexity: O(log(N)) with N being the number of elements in the sorted set.
+> Available for: Redis 6.0.0+
+
+`EXBZPOPMIN` is the blocking variant of the sorted set `EXZPOPMIN` primitive.
+
+It is the blocking version because it blocks the connection when there are no members to pop from any of the given sorted sets. A member with the lowest score is popped from first sorted set that is non-empty, with the given keys being checked in the order that they are given.
+
+The `timeout` argument is interpreted as a double value specifying the maximum number of seconds to block. A timeout of zero can be used to block indefinitely.
+
+See the [BLPOP documentation](https://redis.io/commands/blpop/) for the exact semantics, since `EXBZPOPMIN` is identical to `BLPOP` with the only difference being the data structure being popped from.
+
+#### Return value
+
+Array reply: specifically:
+
+- A nil multi-bulk when no element could be popped and the timeout expired.
+- A three-element multi-bulk with the first element being the name of the key where a member was popped, the second element is the popped member itself, and the third element is the score of the popped element.
+
+### EXBZPOPMAX
+
+> EXBZPOPMAX key [key ...] timeout  
+> time complexity: O(log(N)) with N being the number of elements in the sorted set.
+> Available for: Redis 6.0.0+
+
+`EXBZPOPMAX` is the blocking variant of the sorted set `EXZPOPMAX` primitive.
+
+It is the blocking version because it blocks the connection when there are no members to pop from any of the given sorted sets. A member with the lowest score is popped from first sorted set that is non-empty, with the given keys being checked in the order that they are given.
+
+The `timeout` argument is interpreted as a double value specifying the maximum number of seconds to block. A timeout of zero can be used to block indefinitely.
+
+See the [EXBZPOPMIN documentation](###EXBZPOPMIN) for the exact semantics, since `EXBZPOPMAX` is identical to `EXBZPOPMIN` with the only difference being the data structure being popped from.
+
+#### Return value
+
+Array reply: specifically:
+
+- A nil multi-bulk when no element could be popped and the timeout expired.
+- A three-element multi-bulk with the first element being the name of the key where a member was popped, the second element is the popped member itself, and the third element is the score of the popped element.
