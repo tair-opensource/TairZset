@@ -73,6 +73,16 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         assert_equal 1 [r exzrevrank tairzsetkey y]
         assert_equal 0 [r exzrevrank tairzsetkey z]
         assert_equal "" [r exzrevrank tairzsetkey foo]
+
+        # withscores
+        assert_equal {0 10} [r exzrank tairzsetkey x withscore]
+        assert_equal {1 20} [r exzrank tairzsetkey y withscore]
+        assert_equal {2 30} [r exzrank tairzsetkey z withscore]
+        assert_equal "" [r exzrank tairzsetkey foo withscore]
+        assert_equal {2 10} [r exzrevrank tairzsetkey x withscore]
+        assert_equal {1 20} [r exzrevrank tairzsetkey y withscore]
+        assert_equal {0 30} [r exzrevrank tairzsetkey z withscore]
+        assert_equal "" [r exzrevrank tairzsetkey foo withscore]
     }
 
     test "EXZRANKBYSCORE/EXZREVRANKBYSCORE basics" {
@@ -96,6 +106,8 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
         r exzrem tairzsetkey y
         assert_equal 0 [r exzrank tairzsetkey x]
         assert_equal 1 [r exzrank tairzsetkey z]
+        assert_equal {0 10} [r exzrank tairzsetkey x withscore]
+        assert_equal {1 30} [r exzrank tairzsetkey z withscore]
     }
 
     test "EXZINCRBY - can create a new sorted set" {
@@ -363,27 +375,6 @@ start_server {tags {"tairzset"} overrides {bind 0.0.0.0}} {
 
         # withscores
         assert_equal {d 4 c 3 b 2 a 1} [r exzrevrange ztmp 0 -1 withscores]
-    }
-
-    test "EXZRANK/EXZREVRANK basics" {
-        r del zranktmp
-        r exzadd zranktmp 10 x
-        r exzadd zranktmp 20 y
-        r exzadd zranktmp 30 z
-        assert_equal 0 [r exzrank zranktmp x]
-        assert_equal 1 [r exzrank zranktmp y]
-        assert_equal 2 [r exzrank zranktmp z]
-        assert_equal "" [r exzrank zranktmp foo]
-        assert_equal 2 [r exzrevrank zranktmp x]
-        assert_equal 1 [r exzrevrank zranktmp y]
-        assert_equal 0 [r exzrevrank zranktmp z]
-        assert_equal "" [r exzrevrank zranktmp foo]
-    }
-
-    test "EXZRANK - after deletion" {
-        r exzrem zranktmp y
-        assert_equal 0 [r exzrank zranktmp x]
-        assert_equal 1 [r exzrank zranktmp z]
     }
 
     test "EXZINCRBY - can create a new sorted set" {

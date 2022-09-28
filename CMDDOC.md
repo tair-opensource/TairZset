@@ -205,21 +205,25 @@ Returns the tairzset cardinality (number of elements) of the tairzset stored at 
 #### Return value
 Integer reply: the cardinality (number of elements) of the tairzset, or 0 if key does not exist.
 ### EXZRANK
-> EXZRANK key member  
+> EXZRANK key member [WITHSCORE]
 > time complexity：O(log(N))
 #### Command Description:
 Returns the rank of member in the tairzset stored at key, with the scores ordered from low to high. The rank (or index) is 0-based, which means that the member with the lowest score has rank 0.
+
+The optional WITHSCORES argument makes the command return both the ranke and the score, instead of the rank alone.
 
 Use EXZREVRANK to get the rank of an element with the scores ordered from high to low.
 #### Return value
 If member exists in the tairzset, Integer reply: the rank of member.
 If member does not exist in the tairzset or key does not exist, Bulk string reply: nil.
 ### EXZREVRANK
-> EXZREVRANK key member  
+> EXZREVRANK key member [WITHSCORE]
 > time complexity：O(log(N))
 
 #### Command Description:
 Returns the rank of member in the tairzset stored at key, with the scores ordered from high to low. The rank (or index) is 0-based, which means that the member with the highest score has rank 0.
+
+The optional WITHSCORES argument makes the command return both the ranke and the score, instead of the rank alone.
 
 Use EXZRANK to get the rank of an element with the scores ordered from low to high.
 
