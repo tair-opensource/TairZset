@@ -92,7 +92,13 @@ then the tairzset_module.so library file will be generated in the lib directory
 3. run ./runtest --single tairzset
 
 ## Client
-### Java : https://github.com/aliyun/alibabacloud-tairjedis-sdk
+
+| language | GitHub |
+|----------|---|
+| Java     |https://github.com/alibaba/alibabacloud-tairjedis-sdk|
+| Python   |https://github.com/alibaba/tair-py|
+| Go       |https://github.com/alibaba/tair-go|
+| .Net     |https://github.com/alibaba/AlibabaCloud.TairSDK|
 
 ## API
 [Ref](CMDDOC.md)
