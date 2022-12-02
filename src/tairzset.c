@@ -740,7 +740,7 @@ cleanup:
     RedisModule_Free(scores);
 }
 
-long exZsetRank(TairZsetObj *zobj, RedisModuleString *ele, int reverse, int byscore) {
+long exZsetRank(TairZsetObj *zobj, RedisModuleString *ele, int reverse, int byscore, scoretype **return_score) {
     unsigned long llen;
     unsigned long rank;
 
@@ -767,6 +767,9 @@ long exZsetRank(TairZsetObj *zobj, RedisModuleString *ele, int reverse, int bysc
         if (de != NULL) {
             scoretype *score = (scoretype *)dictGetVal(de);
             rank = m_zslGetRank(zsl, score, ele);
+            if (return_score != NULL) {
+                *return_score = score;
+            }
         } else {
             return -1;
         }
@@ -779,6 +782,8 @@ long exZsetRank(TairZsetObj *zobj, RedisModuleString *ele, int reverse, int bysc
 
 void exZrankGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int reverse, int byscore) {
     long rank;
+    int withscore = 0;
+    scoretype *score = NULL;
 
     RedisModuleKey *key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_READ);
     int type = RedisModule_KeyType(key);
@@ -795,9 +800,31 @@ void exZrankGenericCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int ar
         tair_zset_obj = RedisModule_ModuleTypeGetValue(key);
     }
 
-    rank = exZsetRank(tair_zset_obj, argv[2], reverse, byscore);
+    if (argc == 4) {
+        if (mstringcasecmp(argv[3], "withscore")) {
+            RedisModule_ReplyWithError(ctx, "ERR syntax error");
+            return;
+        } else{
+            withscore = 1;
+        }
+    }
+
+    if (withscore) {
+        rank = exZsetRank(tair_zset_obj, argv[2], reverse, byscore, &score);
+    } else {
+        rank = exZsetRank(tair_zset_obj, argv[2], reverse, byscore, NULL);
+    }
+
     if (rank >= 0) {
+        if (withscore) {
+            RedisModule_ReplyWithArray(ctx, 2);
+        }
         RedisModule_ReplyWithLongLong(ctx, rank);
+        if (withscore) {
+            sds score_str = mscore2String(score);
+            RedisModule_ReplyWithStringBuffer(ctx, score_str, sdslen(score_str));
+            m_sdsfree(score_str);
+        }
     } else {
         RedisModule_ReplyWithNull(ctx);
     }
@@ -2062,10 +2089,10 @@ int TairZsetTypeZcard_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     return REDISMODULE_OK;
 }
 
-/* EXZRANK key member */
+/* EXZRANK key member [WITHSCORE] */
 int TairZsetTypeZrank_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     RedisModule_AutoMemory(ctx);
-    if (argc != 3) {
+    if (argc < 3 || argc > 4) {
         return RedisModule_WrongArity(ctx);
     }
 
@@ -2073,10 +2100,10 @@ int TairZsetTypeZrank_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     return REDISMODULE_OK;
 }
 
-/* EXZREVRANK key member */
+/* EXZREVRANK key member [WITHSCORE] */
 int TairZsetTypeZrevrank_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     RedisModule_AutoMemory(ctx);
-    if (argc != 3) {
+    if (argc < 3 || argc > 4) {
         return RedisModule_WrongArity(ctx);
     }
 
