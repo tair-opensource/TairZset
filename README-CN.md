@@ -106,7 +106,7 @@ cmake ../ && make -j
 [参考这里](CMDDOC.md)
 
 ## 适用redis版本
-redis 5.x 、redis 6.x
+redis >= 5.0
 
 ## 我们的modules
 
