@@ -104,8 +104,7 @@ then the tairzset_module.so library file will be generated in the lib directory
 [Ref](CMDDOC.md)
 
 ## Applicable redis version   
-redis 5.x 、redis 6.x
-
+redis >= 5.0
 
 ### Our modules
 [TairHash](https://github.com/alibaba/TairHash): A redis module, similar to redis hash, but you can set expire and version for the field  
